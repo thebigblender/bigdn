@@ -1,0 +1,6 @@
+thing.md
+compile_commands.json
+.vscode
+.cache
+*.o
+/build
