@@ -37,11 +37,13 @@ include_directories(
 # Source files (we list them explicitly to avoid GLOB caching issues)
 set(SOURCES
     src/main.cpp
+    src/benchmark.cpp
     src/image.cpp
     src/metrics.cpp
     
     # Classical Filters (Uncomment and implement these files as you create them)
-    src/filters/mean.cpp
+    src/filters/mean_ST.cpp
+    src/filters/mean_OMP.cpp
     # src/filters/gaussian.cpp
     # src/filters/median.cpp
     # src/filters/bilateral.cpp
@@ -54,15 +56,9 @@ set(SOURCES
 
 # Add CUDA source files only if CUDA was found
 if(CUDA_ENABLED)
-    # list(APPEND SOURCES
-    #     src/filters/mean.cu
-    #     src/filters/gaussian.cu
-    #     src/filters/median.cu
-    #     src/filters/bilateral.cu
-    #     src/filters/guided.cu
-    #     src/filters/nlm.cu
-    #     src/filters/dncnn.cu
-    # )
+    list(APPEND SOURCES
+        src/filters/mean_CUDA.cu
+    )
 endif()
 
 # Executable target

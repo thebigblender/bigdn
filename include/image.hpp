@@ -12,11 +12,15 @@ public:
 
     float getPixel(int x, int y, int c) const;
     float getPixelClamped(int x, int y, int c) const;
+    
     void setPixel(int x, int y, int c, float value);
     
     int getWidth() const { return width; }
     int getHeight() const { return height; }
     int getChannels() const { return channels; }
+
+    float* getData() { return data.data(); }
+    const float* getData() const { return data.data(); }
 
 private:
     int width;

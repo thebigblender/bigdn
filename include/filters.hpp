@@ -2,7 +2,12 @@
 #include "image.hpp"
 
 namespace Filters {
-    Image meanCPU(const Image& input, int kernelSize);
+    Image meanCPU_ST(const Image& input, int kernelSize);
+    Image meanCPU_OMP(const Image& input, int kernelSize);
+
+#ifdef WITH_CUDA
+    Image meanCUDA(const Image& input, int kernelSize);
+#endif
 
     Image gaussianNaiveCPU(const Image& input, int kernelSize, float sigma);
 
