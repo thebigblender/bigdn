@@ -4,3 +4,5 @@ compile_commands.json
 .cache
 *.o
 /build
+*.png
+build_with_cuda.sh

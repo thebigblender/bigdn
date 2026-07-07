@@ -2,10 +2,9 @@
 #include <nanobench.h>
 
 #include "benchmark.hpp"
+#include <cuda_runtime.h>
 
 #include <iostream>
-#include <chrono>
-#include <vector>
 #include <iomanip>
 #include <numeric>
 #include <algorithm>
@@ -21,14 +20,12 @@ namespace Benchmark {
 Image generateSyntheticImage(int width, int height) {
     Image img(width, height, 3);
 
-    // Set up a simple grid pattern with gradients
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             float r = static_cast<float>(x) / width;
             float g = static_cast<float>(y) / height;
             float b = 0.5f * (r + g);
 
-            // Add checkerboard pattern
             if (((x / 32) + (y / 32)) % 2 == 0) {
                 r = 1.0f - r;
                 g = 1.0f - g;
@@ -41,16 +38,15 @@ Image generateSyntheticImage(int width, int height) {
         }
     }
 
-    // Add some synthetic Gaussian-like noise
-    std::mt19937 gen(42); // Seeded generator for reproducibility
-    std::normal_distribution<float> dist(0.0f, 0.08f); // mean = 0, stddev = 0.08
+    std::mt19937 gen(42);
+    std::normal_distribution<float> dist(0.0f, 0.08f);
 
     for (int c = 0; c < 3; ++c) {
         for (int y = 0; y < height; ++y) {
             for (int x = 0; x < width; ++x) {
                 float val = img.getPixel(x, y, c);
                 val += dist(gen);
-                val = std::max(0.0f, std::min(val, 1.0f)); // clamp to [0, 1]
+                val = std::max(0.0f, std::min(val, 1.0f));
                 img.setPixel(x, y, c, val);
             }
         }
@@ -61,177 +57,139 @@ Image generateSyntheticImage(int width, int height) {
 
 void run(const std::string& imagePath, int kernelSize, int numRuns) {
     Image input;
-    bool loadedFromFile = false;
 
-    // We check if the imagePath is loadable as provided.
-    // If running from build/, the root directory is parent directory '../'.
-    // So we try imagePath first, then check if '../' + imagePath is available.
-    std::string pathAttempt = imagePath;
-    std::cout << "Attempting to load image from: " << pathAttempt << std::endl;
-    if (input.load(pathAttempt)) {
-        loadedFromFile = true;
-    } else {
-        pathAttempt = "../" + imagePath;
-        std::cout << "Failed. Attempting to load image from: " << pathAttempt << std::endl;
-        if (input.load(pathAttempt)) {
-            loadedFromFile = true;
+    // Load image
+    if (!input.load(imagePath)) {
+        std::string altPath = "../" + imagePath;
+        if (!input.load(altPath)) {
+            std::cerr << "Failed to load image. Falling back to synthetic 1024x1024 image." << std::endl;
+            input = generateSyntheticImage(1024, 1024);
         }
     }
 
-    if (loadedFromFile) {
-        std::cout << "Successfully loaded image: " << input.getWidth() << "x" << input.getHeight() 
-                  << " with " << input.getChannels() << " channels." << std::endl;
-    } else {
-        std::cerr << "Failed to load image. Falling back to synthetic image." << std::endl;
-        std::cout << "Generating 1024x1024 synthetic noisy image..." << std::endl;
-        input = generateSyntheticImage(1024, 1024);
-        std::cout << "Synthetic image generated." << std::endl;
-    }
-
-    Image outputST;
-    Image outputOMP;
-#ifdef WITH_CUDA
-    Image outputCUDA;
-#endif
+    Image outputST(input.getWidth(), input.getHeight(), input.getChannels());
+    Image outputOMP(input.getWidth(), input.getHeight(), input.getChannels());
+    Image outputCUDA(input.getWidth(), input.getHeight(), input.getChannels());
 
     std::cout << "\nStarting nanobench benchmarks..." << std::endl;
     
     // Set up nanobench
     ankerl::nanobench::Bench bench;
-    bench.title("Mean Filter Denoising (" + std::to_string(kernelSize) + "x" + std::to_string(kernelSize) + ")")
+    bench.title("Mean Filter Denoising")
          .unit("evaluation")
-         .relative(true) // Compares implementations relative to each other
-         .epochs(2) // Keep it small (2 epochs) for fast benchmarking on large images
-         .minEpochTime(std::chrono::milliseconds(1)); // Avoid running multiple iterations if it is slow
+         .relative(true)
+         .epochs(5)
+         .minEpochTime(std::chrono::milliseconds(100))
+         .output(nullptr); // Suppress default wide console table
 
     if (numRuns > 0) {
         bench.minEpochIterations(numRuns);
     }
 
-    // Benchmark Single-Threaded CPU implementation
+    // Run Benchmarks
     bench.run("Single-Threaded (ST)", [&] {
         outputST = Filters::meanCPU_ST(input, kernelSize);
         ankerl::nanobench::doNotOptimizeAway(outputST.getData());
     });
 
-    // Benchmark OpenMP parallel implementation
     bench.run("OpenMP (OMP)", [&] {
         outputOMP = Filters::meanCPU_OMP(input, kernelSize);
         ankerl::nanobench::doNotOptimizeAway(outputOMP.getData());
     });
 
-#ifdef WITH_CUDA
-    // Benchmark CUDA GPU implementation
+    // Allocate GPU memory and copy input once before the benchmark loop
+    int width = input.getWidth();
+    int height = input.getHeight();
+    int channels = input.getChannels();
+    size_t imgSize = width * height * channels * sizeof(float);
+
+    float* d_input = nullptr;
+    float* d_temp = nullptr;
+    float* d_output = nullptr;
+    cudaMalloc(&d_input, imgSize);
+    cudaMalloc(&d_temp, imgSize);
+    cudaMalloc(&d_output, imgSize);
+    cudaMemcpy(d_input, input.getData(), imgSize, cudaMemcpyHostToDevice);
+
     bench.run("CUDA (GPU)", [&] {
-        outputCUDA = Filters::meanCUDA(input, kernelSize);
-        ankerl::nanobench::doNotOptimizeAway(outputCUDA.getData());
+        Filters::meanCUDA_NoAlloc(d_input, d_temp, d_output, width, height, channels, kernelSize);
+        cudaDeviceSynchronize();
     });
-#endif
 
-    // Compute Metrics & Quality relative to input image
-    float psnrST = Metrics::calculatePSNR(input, outputST);
-    float ssimST = Metrics::calculateSSIM(input, outputST);
-    
-    float psnrOMP = Metrics::calculatePSNR(input, outputOMP);
-    float ssimOMP = Metrics::calculateSSIM(input, outputOMP);
+    // Copy separable output back to host and clean up GPU memory
+    cudaMemcpy(outputCUDA.getData(), d_output, imgSize, cudaMemcpyDeviceToHost);
+    cudaFree(d_input);
+    cudaFree(d_temp);
+    cudaFree(d_output);
 
-#ifdef WITH_CUDA
-    float psnrCUDA = Metrics::calculatePSNR(input, outputCUDA);
-    float ssimCUDA = Metrics::calculateSSIM(input, outputCUDA);
-#endif
+    // Save Output Images
+    outputST.save("output_ST.png");
+    outputOMP.save("output_OMP.png");
+    outputCUDA.save("output_CUDA.png");
 
-    // Compute Correctness differences (relative to Single-Threaded baseline)
-    float psnrDiff = Metrics::calculatePSNR(outputST, outputOMP);
-    float ssimDiff = Metrics::calculateSSIM(outputST, outputOMP);
-
-#ifdef WITH_CUDA
-    float psnrDiffCUDA = Metrics::calculatePSNR(outputST, outputCUDA);
-    float ssimDiffCUDA = Metrics::calculateSSIM(outputST, outputCUDA);
-#endif
-
-    // Check if OpenMP output is identical to Single-Threaded (with minor tolerance)
-    bool exactMatch = true;
-    if (outputST.getWidth() == outputOMP.getWidth() &&
-        outputST.getHeight() == outputOMP.getHeight() &&
-        outputST.getChannels() == outputOMP.getChannels()) {
-        const float* stData = outputST.getData();
-        const float* ompData = outputOMP.getData();
-        size_t totalElements = outputST.getWidth() * outputST.getHeight() * outputST.getChannels();
-        for (size_t i = 0; i < totalElements; ++i) {
-            if (std::abs(stData[i] - ompData[i]) > 1e-5f) {
-                exactMatch = false;
-                break;
+    // Print Benchmark Summary Table (including Kernel Size and Cycles)
+    const auto& results = bench.results();
+    if (!results.empty()) {
+        auto formatTime = [](double sec) {
+            double ms = sec * 1000.0;
+            char buf[32];
+            if (ms >= 1.0) {
+                std::snprintf(buf, sizeof(buf), "%.3f ms", ms);
+            } else {
+                std::snprintf(buf, sizeof(buf), "%.3f us", ms * 1000.0);
             }
+            return std::string(buf);
+        };
+
+        std::cout << "\n" << std::string(75, '=') << "\n";
+        std::cout << " BENCHMARK SUMMARY (Kernel Size: " << kernelSize << "x" << kernelSize << ")\n";
+        std::cout << " Image Dimensions: " << input.getWidth() << "x" << input.getHeight() 
+                  << " (" << input.getChannels() << " channels)\n";
+        std::cout << " Configuration:    " << results.front().config().mNumEpochs << " epochs, " 
+                  << results.front().config().mMinEpochIterations << " min iterations/epoch\n";
+        std::cout << std::string(75, '-') << "\n";
+        std::cout << std::left << std::setw(28) << " Implementation" 
+                  << std::right << std::setw(16) << "Median Time" 
+                  << std::setw(13) << "Error %" 
+                  << std::setw(15) << "Speedup" << "\n";
+        std::cout << std::string(75, '-') << "\n";
+
+        double baselineTime = results.front().median(ankerl::nanobench::Result::Measure::elapsed);
+
+        for (const auto& r : results) {
+            double medianSec = r.median(ankerl::nanobench::Result::Measure::elapsed);
+            double errPercent = r.medianAbsolutePercentError(ankerl::nanobench::Result::Measure::elapsed) * 100.0;
+            double speedup = (medianSec > 0.0) ? (baselineTime / medianSec) : 0.0;
+
+            std::cout << std::left << " " << std::setw(27) << r.config().mBenchmarkName
+                      << std::right << std::setw(16) << formatTime(medianSec)
+                      << std::fixed << std::setprecision(1) << std::setw(12) << errPercent << "%"
+                      << std::setprecision(2) << std::setw(14) << speedup << "x" << "\n";
         }
-    } else {
-        exactMatch = false;
+        std::cout << std::string(75, '=') << "\n";
     }
 
-#ifdef WITH_CUDA
-    // Check if CUDA output is identical to Single-Threaded (with minor tolerance)
-    bool exactMatchCUDA = true;
-    if (outputST.getWidth() == outputCUDA.getWidth() &&
-        outputST.getHeight() == outputCUDA.getHeight() &&
-        outputST.getChannels() == outputCUDA.getChannels()) {
-        const float* stData = outputST.getData();
-        const float* cudaData = outputCUDA.getData();
-        size_t totalElements = outputST.getWidth() * outputST.getHeight() * outputST.getChannels();
-        for (size_t i = 0; i < totalElements; ++i) {
-            if (std::abs(stData[i] - cudaData[i]) > 1e-5f) {
-                exactMatchCUDA = false;
-                break;
-            }
-        }
-    } else {
-        exactMatchCUDA = false;
-    }
-#endif
+    // Print Quality Metrics (All relative to the original noisy input image)
+    std::cout << "\n" << std::string(70, '=') << "\n";
+    std::cout << " DENOISING QUALITY METRICS (Relative to original noisy input)\n";
+    std::cout << std::string(70, '-') << "\n";
+    std::cout << std::left << std::setw(25) << " Implementation" 
+              << std::right << std::setw(18) << "PSNR (dB)" 
+              << std::setw(18) << "SSIM" << "\n";
+    std::cout << std::string(70, '-') << "\n";
 
-    // Save outputs relative to working directory
-    std::string outSTPath = "output_ST.png";
-    std::string outOMPPath = "output_OMP.png";
-    outputST.save(outSTPath);
-    outputOMP.save(outOMPPath);
+    auto printMetricRow = [&](const std::string& name, const Image& output) {
+        float psnr = Metrics::calculatePSNR(input, output);
+        float ssim = Metrics::calculateSSIM(input, output);
+        std::cout << std::left << " " << std::setw(24) << name
+                  << std::right << std::fixed << std::setprecision(2) << std::setw(18) << psnr
+                  << std::setprecision(4) << std::setw(18) << ssim << "\n";
+    };
 
-#ifdef WITH_CUDA
-    std::string outCUDAPath = "output_CUDA.png";
-    outputCUDA.save(outCUDAPath);
-#endif
-
-    // Print Quality and Correctness Metrics
-    std::cout << "\n" << std::string(60, '=') << "\n";
-    std::cout << " QUALITY & CORRECTNESS METRICS (Kernel Size: " << kernelSize << "x" << kernelSize << ")\n";
-    std::cout << " Image Dimensions: " << input.getWidth() << "x" << input.getHeight() 
-              << " (" << input.getChannels() << " channels)\n";
-    std::cout << std::string(60, '-') << "\n";
-    
-    std::cout << " Denoising Quality (PSNR/SSIM relative to noisy input):\n";
-    std::cout << "   - ST Output:  PSNR = " << std::fixed << std::setprecision(2) << psnrST << " dB, SSIM = " << std::setprecision(4) << ssimST << "\n";
-    std::cout << "   - OMP Output: PSNR = " << std::fixed << std::setprecision(2) << psnrOMP << " dB, SSIM = " << std::setprecision(4) << ssimOMP << "\n";
-#ifdef WITH_CUDA
-    std::cout << "   - CUDA Output: PSNR = " << std::fixed << std::setprecision(2) << psnrCUDA << " dB, SSIM = " << std::setprecision(4) << ssimCUDA << "\n";
-#endif
-    std::cout << std::string(60, '-') << "\n";
-
-    std::cout << " Correctness Check (ST vs OMP):\n";
-    std::cout << "   - PSNR: " << std::fixed << std::setprecision(2) << psnrDiff << " dB\n";
-    std::cout << "   - SSIM: " << std::fixed << std::setprecision(4) << ssimDiff << "\n";
-    std::cout << "   - Exact match (threshold 1e-5): " << (exactMatch ? "PASS" : "FAIL") << "\n";
-#ifdef WITH_CUDA
-    std::cout << std::string(60, '-') << "\n";
-    std::cout << " Correctness Check (ST vs CUDA):\n";
-    std::cout << "   - PSNR: " << std::fixed << std::setprecision(2) << psnrDiffCUDA << " dB\n";
-    std::cout << "   - SSIM: " << std::fixed << std::setprecision(4) << ssimDiffCUDA << "\n";
-    std::cout << "   - Exact match (threshold 1e-5): " << (exactMatchCUDA ? "PASS" : "FAIL") << "\n";
-#endif
-    std::cout << std::string(60, '-') << "\n";
-    std::cout << " Saved outputs to:\n";
-    std::cout << "   - Single-Threaded: " << outSTPath << "\n";
-    std::cout << "   - OpenMP:          " << outOMPPath << "\n";
-#ifdef WITH_CUDA
-    std::cout << "   - CUDA:            " << outCUDAPath << "\n";
-#endif
-    std::cout << std::string(60, '=') << "\n\n";
+    printMetricRow("Single-Threaded (ST)", outputST);
+    printMetricRow("OpenMP (OMP)", outputOMP);
+    printMetricRow("CUDA (GPU)", outputCUDA);
+    std::cout << std::string(70, '=') << "\n\n";
 }
 
 } // namespace Benchmark

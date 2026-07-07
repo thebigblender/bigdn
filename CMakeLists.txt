@@ -21,6 +21,7 @@ if(CMAKE_CUDA_COMPILER)
     endif()
     add_compile_definitions(WITH_CUDA)
     set(CUDA_ENABLED TRUE)
+    find_package(CUDAToolkit REQUIRED)
     message(STATUS "CUDA compiler found: ${CMAKE_CUDA_COMPILER}")
 else()
     set(CUDA_ENABLED FALSE)
@@ -69,6 +70,13 @@ target_link_libraries(denoiser_toolkit
     PRIVATE
         OpenMP::OpenMP_CXX
 )
+
+if(CUDA_ENABLED)
+    target_link_libraries(denoiser_toolkit
+        PRIVATE
+            CUDA::cudart
+    )
+endif()
 
 # Optional: Enable max warnings for quality
 if(MSVC)
