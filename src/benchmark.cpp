@@ -72,7 +72,7 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     Image outputCUDA(input.getWidth(), input.getHeight(), input.getChannels());
 
     std::cout << "\nStarting nanobench benchmarks..." << std::endl;
-    
+
     // Set up nanobench
     ankerl::nanobench::Bench bench;
     bench.title("Mean Filter Denoising")
@@ -87,12 +87,12 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     }
 
     // Run Benchmarks
-    bench.run("Single-Threaded (ST)", [&] {
+    bench.run("Naive Single Threaded", [&] {
         outputST = Filters::meanCPU_ST(input, kernelSize);
         ankerl::nanobench::doNotOptimizeAway(outputST.getData());
     });
 
-    bench.run("OpenMP (OMP)", [&] {
+    bench.run("OpenMP", [&] {
         outputOMP = Filters::meanCPU_OMP(input, kernelSize);
         ankerl::nanobench::doNotOptimizeAway(outputOMP.getData());
     });
@@ -111,7 +111,7 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     cudaMalloc(&d_output, imgSize);
     cudaMemcpy(d_input, input.getData(), imgSize, cudaMemcpyHostToDevice);
 
-    bench.run("CUDA (GPU)", [&] {
+    bench.run("CUDA", [&] {
         Filters::meanCUDA_NoAlloc(d_input, d_temp, d_output, width, height, channels, kernelSize);
         cudaDeviceSynchronize();
     });
@@ -142,15 +142,14 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
         };
 
         std::cout << "\n" << std::string(75, '=') << "\n";
-        std::cout << " BENCHMARK SUMMARY (Kernel Size: " << kernelSize << "x" << kernelSize << ")\n";
-        std::cout << " Image Dimensions: " << input.getWidth() << "x" << input.getHeight() 
-                  << " (" << input.getChannels() << " channels)\n";
-        std::cout << " Configuration:    " << results.front().config().mNumEpochs << " epochs, " 
-                  << results.front().config().mMinEpochIterations << " min iterations/epoch\n";
+        std::cout << " BIGDN benchmark (Kernel size: " << kernelSize << "\n";
+        std::cout << " Img Dims: " << input.getWidth() << "x" << input.getHeight();
+        std::cout << " Config:    " << results.front().config().mNumEpochs << " epochs, "
+                  << results.front().config().mMinEpochIterations << " min it/epoch\n";
         std::cout << std::string(75, '-') << "\n";
-        std::cout << std::left << std::setw(28) << " Implementation" 
-                  << std::right << std::setw(16) << "Median Time" 
-                  << std::setw(13) << "Error %" 
+        std::cout << std::left << std::setw(28) << " Thing"
+                  << std::right << std::setw(16) << "Median Time"
+                  << std::setw(13) << "Error %"
                   << std::setw(15) << "Speedup" << "\n";
         std::cout << std::string(75, '-') << "\n";
 
@@ -173,8 +172,8 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     std::cout << "\n" << std::string(70, '=') << "\n";
     std::cout << " DENOISING QUALITY METRICS (Relative to original noisy input)\n";
     std::cout << std::string(70, '-') << "\n";
-    std::cout << std::left << std::setw(25) << " Implementation" 
-              << std::right << std::setw(18) << "PSNR (dB)" 
+    std::cout << std::left << std::setw(25) << " Implementation"
+              << std::right << std::setw(18) << "PSNR (dB)"
               << std::setw(18) << "SSIM" << "\n";
     std::cout << std::string(70, '-') << "\n";
 
