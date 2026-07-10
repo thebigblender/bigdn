@@ -68,8 +68,11 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     }
 
     Image outputST(input.getWidth(), input.getHeight(), input.getChannels());
+    Image outputGaussianST(input.getWidth(), input.getHeight(), input.getChannels());
     Image outputOMP(input.getWidth(), input.getHeight(), input.getChannels());
+    Image outputGaussianOMP(input.getWidth(), input.getHeight(), input.getChannels());
     Image outputCUDA(input.getWidth(), input.getHeight(), input.getChannels());
+    Image outputGaussianCUDA(input.getWidth(), input.getHeight(), input.getChannels());
 
     std::cout << "\nStarting nanobench benchmarks..." << std::endl;
 
@@ -87,12 +90,12 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     }
 
     // Run Benchmarks
-    bench.run("Naive Single Threaded", [&] {
+    bench.run("Mean ST", [&] {
         outputST = Filters::meanCPU_ST(input, kernelSize);
         ankerl::nanobench::doNotOptimizeAway(outputST.getData());
     });
 
-    bench.run("OpenMP", [&] {
+    bench.run("Mean OMP", [&] {
         outputOMP = Filters::meanCPU_OMP(input, kernelSize);
         ankerl::nanobench::doNotOptimizeAway(outputOMP.getData());
     });
@@ -105,27 +108,67 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
 
     float* d_input = nullptr;
     float* d_temp = nullptr;
-    float* d_output = nullptr;
+    float* d_output_mean = nullptr;
+    float* d_output_gaussian = nullptr;
+
     cudaMalloc(&d_input, imgSize);
     cudaMalloc(&d_temp, imgSize);
-    cudaMalloc(&d_output, imgSize);
-    cudaMemcpy(d_input, input.getData(), imgSize, cudaMemcpyHostToDevice);
+    cudaMalloc(&d_output_mean, imgSize);
+    cudaMalloc(&d_output_gaussian, imgSize);
 
-    bench.run("CUDA", [&] {
-        Filters::meanCUDA_NoAlloc(d_input, d_temp, d_output, width, height, channels, kernelSize);
+    // Compute and copy 1D Gaussian kernel to GPU constant memory
+    const int radius = kernelSize / 2;
+    std::vector<float> h_kernel(kernelSize);
+    float kernelSum = 0.0f;
+    const float twoSigmaSq = 2.0f * 1.5f * 1.5f; // sigma = 1.5f
+    for (int i = 0; i < kernelSize; ++i) {
+        float x = static_cast<float>(i - radius);
+        h_kernel[i] = std::exp(-(x * x) / twoSigmaSq);
+        kernelSum += h_kernel[i];
+    }
+    const float invSum = 1.0f / kernelSum;
+    for (float& val : h_kernel) {
+        val *= invSum;
+    }
+
+    cudaMemcpy(d_input, input.getData(), imgSize, cudaMemcpyHostToDevice);
+    Filters::gaussianCUDA_UploadKernel(h_kernel.data(), kernelSize);
+
+    bench.run("Mean CUDA", [&] {
+        Filters::meanCUDA_NoAlloc(d_input, d_temp, d_output_mean, width, height, channels, kernelSize);
         cudaDeviceSynchronize();
     });
 
-    // Copy separable output back to host and clean up GPU memory
-    cudaMemcpy(outputCUDA.getData(), d_output, imgSize, cudaMemcpyDeviceToHost);
+    bench.run("Gaussian ST", [&] {
+        outputGaussianST = Filters::gaussianCPU_ST(input, kernelSize, 1.5f);
+        ankerl::nanobench::doNotOptimizeAway(outputGaussianST.getData());
+    });
+
+    bench.run("Gaussian OMP", [&] {
+        outputGaussianOMP = Filters::gaussianCPU_OMP(input, kernelSize, 1.5f);
+        ankerl::nanobench::doNotOptimizeAway(outputGaussianOMP.getData());
+    });
+
+    bench.run("Gaussian CUDA", [&] {
+        Filters::gaussianCUDA_NoAlloc(d_input, d_temp, d_output_gaussian, width, height, channels, kernelSize);
+        cudaDeviceSynchronize();
+    });
+
+    // Copy separable outputs back to host and clean up GPU memory
+    cudaMemcpy(outputCUDA.getData(), d_output_mean, imgSize, cudaMemcpyDeviceToHost);
+    cudaMemcpy(outputGaussianCUDA.getData(), d_output_gaussian, imgSize, cudaMemcpyDeviceToHost);
     cudaFree(d_input);
     cudaFree(d_temp);
-    cudaFree(d_output);
+    cudaFree(d_output_mean);
+    cudaFree(d_output_gaussian);
 
     // Save Output Images
     outputST.save("output_ST.png");
+    outputGaussianST.save("output_gaussian_ST.png");
     outputOMP.save("output_OMP.png");
+    outputGaussianOMP.save("output_gaussian_OMP.png");
     outputCUDA.save("output_CUDA.png");
+    outputGaussianCUDA.save("output_gaussian_CUDA.png");
 
     // Print Benchmark Summary Table (including Kernel Size and Cycles)
     const auto& results = bench.results();
@@ -153,17 +196,24 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
                   << std::setw(15) << "Speedup" << "\n";
         std::cout << std::string(75, '-') << "\n";
 
-        double baselineTime = results.front().median(ankerl::nanobench::Result::Measure::elapsed);
+        double meanBaseline = results[0].median(ankerl::nanobench::Result::Measure::elapsed);
+        double gaussianBaseline = (results.size() > 3) ? results[3].median(ankerl::nanobench::Result::Measure::elapsed) : meanBaseline;
 
+        int idx = 0;
         for (const auto& r : results) {
+            if (idx == 3) {
+                std::cout << std::string(75, '-') << "\n";
+            }
             double medianSec = r.median(ankerl::nanobench::Result::Measure::elapsed);
             double errPercent = r.medianAbsolutePercentError(ankerl::nanobench::Result::Measure::elapsed) * 100.0;
+            double baselineTime = (idx < 3) ? meanBaseline : gaussianBaseline;
             double speedup = (medianSec > 0.0) ? (baselineTime / medianSec) : 0.0;
 
             std::cout << std::left << " " << std::setw(27) << r.config().mBenchmarkName
                       << std::right << std::setw(16) << formatTime(medianSec)
                       << std::fixed << std::setprecision(1) << std::setw(12) << errPercent << "%"
                       << std::setprecision(2) << std::setw(14) << speedup << "x" << "\n";
+            idx++;
         }
         std::cout << std::string(75, '=') << "\n";
     }
@@ -188,6 +238,10 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     printMetricRow("Single-Threaded (ST)", outputST);
     printMetricRow("OpenMP (OMP)", outputOMP);
     printMetricRow("CUDA (GPU)", outputCUDA);
+    std::cout << std::string(70, '-') << "\n";
+    printMetricRow("Gaussian ST", outputGaussianST);
+    printMetricRow("Gaussian OMP", outputGaussianOMP);
+    printMetricRow("Gaussian CUDA", outputGaussianCUDA);
     std::cout << std::string(70, '=') << "\n\n";
 }
 

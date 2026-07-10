@@ -8,8 +8,13 @@ namespace Filters {
     void meanCUDA_NoAlloc(const float* d_input, float* d_temp, float* d_output, int width, int height, int channels,
       int kernelSize);
     
-    Image gaussianNaiveCPU(const Image& input, int kernelSize, float sigma);
+    Image gaussianCPU_ST(const Image& input, int kernelSize, float sigma);
+    Image gaussianCPU_OMP(const Image& input, int kernelSize, float sigma);
     Image gaussianSeparableCPU(const Image& input, int kernelSize, float sigma);
+    Image gaussianCUDA(const Image& input, int kernelSize, float sigma);
+    void gaussianCUDA_NoAlloc(const float* d_input, float* d_temp, float* d_output, int width, int height, int channels,
+      int kernelSize);
+    void gaussianCUDA_UploadKernel(const float* h_kernel, int kernelSize);
     
     Image medianCPU(const Image& input, int kernelSize);
     

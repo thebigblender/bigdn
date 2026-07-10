@@ -45,7 +45,8 @@ set(SOURCES
     # Classical Filters (Uncomment and implement these files as you create them)
     src/filters/mean_ST.cpp
     src/filters/mean_OMP.cpp
-    # src/filters/gaussian.cpp
+    src/filters/gaussian_ST.cpp
+    src/filters/gaussian_OMP.cpp
     # src/filters/median.cpp
     # src/filters/bilateral.cpp
     # src/filters/guided.cpp
@@ -59,6 +60,7 @@ set(SOURCES
 if(CUDA_ENABLED)
     list(APPEND SOURCES
         src/filters/mean_CUDA.cu
+        src/filters/gaussian_CUDA.cu
     )
 endif()
 
