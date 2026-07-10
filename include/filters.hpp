@@ -20,7 +20,13 @@ namespace Filters {
     
     Image bilateralCPU(const Image& input, int kernelSize, float sigmaSpatial, float sigmaRange);
 
-    Image guidedCPU(const Image& input, const Image& guidance, int kernelSize, float eps);
+    Image guidedCPU_ST(const Image& input, const Image& guidance, int kernelSize, float eps);
+    Image guidedCPU_OMP(const Image& input, const Image& guidance, int kernelSize, float eps);
+    Image guidedCUDA(const Image& input, const Image& guidance, int kernelSize, float eps);
+    void guidedCUDA_NoAlloc(const float* d_input, const float* d_guidance, float* d_output,
+                            float* d_temp1, float* d_temp2, float* d_mean_I, float* d_mean_II, float* d_mean_Ip,
+                            float* d_a, float* d_b,
+                            int width, int height, int channels, int kernelSize, float eps);
 
     Image nlmCPU(const Image& input, int searchWindowSize, int patchSize, float h);
 }

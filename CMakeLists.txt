@@ -49,7 +49,8 @@ set(SOURCES
     src/filters/gaussian_OMP.cpp
     # src/filters/median.cpp
     # src/filters/bilateral.cpp
-    # src/filters/guided.cpp
+    src/filters/guided_ST.cpp
+    src/filters/guided_OMP.cpp
     # src/filters/nlm.cpp
     
     # Learned Filters
@@ -61,6 +62,7 @@ if(CUDA_ENABLED)
     list(APPEND SOURCES
         src/filters/mean_CUDA.cu
         src/filters/gaussian_CUDA.cu
+        src/filters/guided_CUDA.cu
     )
 endif()
 

@@ -62,13 +62,16 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     if (!input.load(imagePath)) {
         std::string altPath = "../" + imagePath;
         if (!input.load(altPath)) {
-            std::cerr << "Failed to load image. Falling back to synthetic 1024x1024 image." << std::endl;
-            input = generateSyntheticImage(1024, 1024);
+            std::cerr << "Error: Failed to load image: " << imagePath << std::endl;
+            exit(1);
         }
     }
 
     Image outputST(input.getWidth(), input.getHeight(), input.getChannels());
     Image outputGaussianST(input.getWidth(), input.getHeight(), input.getChannels());
+    Image outputGuidedST(input.getWidth(), input.getHeight(), input.getChannels());
+    Image outputGuidedOMP(input.getWidth(), input.getHeight(), input.getChannels());
+    Image outputGuidedCUDA(input.getWidth(), input.getHeight(), input.getChannels());
     Image outputOMP(input.getWidth(), input.getHeight(), input.getChannels());
     Image outputGaussianOMP(input.getWidth(), input.getHeight(), input.getChannels());
     Image outputCUDA(input.getWidth(), input.getHeight(), input.getChannels());
@@ -106,15 +109,21 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     int channels = input.getChannels();
     size_t imgSize = width * height * channels * sizeof(float);
 
-    float* d_input = nullptr;
-    float* d_temp = nullptr;
-    float* d_output_mean = nullptr;
-    float* d_output_gaussian = nullptr;
+    int totalPixels = width * height * channels;
+    float* d_workspace = nullptr;
+    cudaMalloc(&d_workspace, 11 * imgSize);
 
-    cudaMalloc(&d_input, imgSize);
-    cudaMalloc(&d_temp, imgSize);
-    cudaMalloc(&d_output_mean, imgSize);
-    cudaMalloc(&d_output_gaussian, imgSize);
+    float* d_input = d_workspace;
+    float* d_temp1 = d_workspace + totalPixels;
+    float* d_temp2 = d_workspace + 2 * totalPixels;
+    float* d_output_mean = d_workspace + 3 * totalPixels;
+    float* d_output_gaussian = d_workspace + 4 * totalPixels;
+    float* d_output_guided = d_workspace + 5 * totalPixels;
+    float* d_mean_I = d_workspace + 6 * totalPixels;
+    float* d_mean_II = d_workspace + 7 * totalPixels;
+    float* d_mean_Ip = d_workspace + 8 * totalPixels;
+    float* d_a = d_workspace + 9 * totalPixels;
+    float* d_b = d_workspace + 10 * totalPixels;
 
     // Compute and copy 1D Gaussian kernel to GPU constant memory
     const int radius = kernelSize / 2;
@@ -135,7 +144,7 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     Filters::gaussianCUDA_UploadKernel(h_kernel.data(), kernelSize);
 
     bench.run("Mean CUDA", [&] {
-        Filters::meanCUDA_NoAlloc(d_input, d_temp, d_output_mean, width, height, channels, kernelSize);
+        Filters::meanCUDA_NoAlloc(d_input, d_temp1, d_output_mean, width, height, channels, kernelSize);
         cudaDeviceSynchronize();
     });
 
@@ -150,21 +159,40 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     });
 
     bench.run("Gaussian CUDA", [&] {
-        Filters::gaussianCUDA_NoAlloc(d_input, d_temp, d_output_gaussian, width, height, channels, kernelSize);
+        Filters::gaussianCUDA_NoAlloc(d_input, d_temp1, d_output_gaussian, width, height, channels, kernelSize);
+        cudaDeviceSynchronize();
+    });
+
+    bench.run("Guided ST", [&] {
+        outputGuidedST = Filters::guidedCPU_ST(input, input, kernelSize, 0.04f);
+        ankerl::nanobench::doNotOptimizeAway(outputGuidedST.getData());
+    });
+
+    bench.run("Guided OMP", [&] {
+        outputGuidedOMP = Filters::guidedCPU_OMP(input, input, kernelSize, 0.04f);
+        ankerl::nanobench::doNotOptimizeAway(outputGuidedOMP.getData());
+    });
+
+    bench.run("Guided CUDA", [&] {
+        Filters::guidedCUDA_NoAlloc(d_input, d_input, d_output_guided, d_temp1, d_temp2,
+                                    d_mean_I, d_mean_II, d_mean_Ip,
+                                    d_a, d_b,
+                                    width, height, channels, kernelSize, 0.04f);
         cudaDeviceSynchronize();
     });
 
     // Copy separable outputs back to host and clean up GPU memory
     cudaMemcpy(outputCUDA.getData(), d_output_mean, imgSize, cudaMemcpyDeviceToHost);
     cudaMemcpy(outputGaussianCUDA.getData(), d_output_gaussian, imgSize, cudaMemcpyDeviceToHost);
-    cudaFree(d_input);
-    cudaFree(d_temp);
-    cudaFree(d_output_mean);
-    cudaFree(d_output_gaussian);
+    cudaMemcpy(outputGuidedCUDA.getData(), d_output_guided, imgSize, cudaMemcpyDeviceToHost);
+    cudaFree(d_workspace);
 
     // Save Output Images
     outputST.save("output_ST.png");
     outputGaussianST.save("output_gaussian_ST.png");
+    outputGuidedST.save("output_guided_ST.png");
+    outputGuidedOMP.save("output_guided_OMP.png");
+    outputGuidedCUDA.save("output_guided_CUDA.png");
     outputOMP.save("output_OMP.png");
     outputGaussianOMP.save("output_gaussian_OMP.png");
     outputCUDA.save("output_CUDA.png");
@@ -198,15 +226,23 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
 
         double meanBaseline = results[0].median(ankerl::nanobench::Result::Measure::elapsed);
         double gaussianBaseline = (results.size() > 3) ? results[3].median(ankerl::nanobench::Result::Measure::elapsed) : meanBaseline;
+        double guidedBaseline = (results.size() > 6) ? results[6].median(ankerl::nanobench::Result::Measure::elapsed) : meanBaseline;
 
         int idx = 0;
         for (const auto& r : results) {
-            if (idx == 3) {
+            if (idx == 3 || idx == 6) {
                 std::cout << std::string(75, '-') << "\n";
             }
             double medianSec = r.median(ankerl::nanobench::Result::Measure::elapsed);
             double errPercent = r.medianAbsolutePercentError(ankerl::nanobench::Result::Measure::elapsed) * 100.0;
-            double baselineTime = (idx < 3) ? meanBaseline : gaussianBaseline;
+            double baselineTime;
+            if (idx < 3) {
+                baselineTime = meanBaseline;
+            } else if (idx < 6) {
+                baselineTime = gaussianBaseline;
+            } else {
+                baselineTime = guidedBaseline;
+            }
             double speedup = (medianSec > 0.0) ? (baselineTime / medianSec) : 0.0;
 
             std::cout << std::left << " " << std::setw(27) << r.config().mBenchmarkName
@@ -242,6 +278,10 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     printMetricRow("Gaussian ST", outputGaussianST);
     printMetricRow("Gaussian OMP", outputGaussianOMP);
     printMetricRow("Gaussian CUDA", outputGaussianCUDA);
+    std::cout << std::string(70, '-') << "\n";
+    printMetricRow("Guided ST", outputGuidedST);
+    printMetricRow("Guided OMP", outputGuidedOMP);
+    printMetricRow("Guided CUDA", outputGuidedCUDA);
     std::cout << std::string(70, '=') << "\n\n";
 }
 
