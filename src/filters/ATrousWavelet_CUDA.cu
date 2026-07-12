@@ -7,14 +7,12 @@
 #define BLOCK_SIZE_X 16
 #define BLOCK_SIZE_Y 16
 
-// 1D B-spline kernel weights
+// 1d b-spline kernel weights
 __constant__ float c_atrous_kernel[5] = {
     0.0625f, 0.25f, 0.375f, 0.25f, 0.0625f
 };
 
-// Pre-process: 
-// Demodulate input RGB by albedo RGB and store in temp.
-// We do NOT modify normal or albedo maps in-place.
+// preprocess: demodulate input rgb by albedo rgb and store in temp
 __global__ void atrousPrepareKernel(
     const float* __restrict__ input, const float* __restrict__ normal, const float* __restrict__ albedo,
     float* __restrict__ temp, const int width, const int height)
@@ -33,14 +31,14 @@ __global__ void atrousPrepareKernel(
         float ag = albedo[plane + idx];
         float ab = albedo[2 * plane + idx];
 
-        // Stable demodulation in RGB space
+        // stable demodulation in rgb space
         temp[idx] = r / (ar + 0.12f);
         temp[plane + idx] = g / (ag + 0.12f);
         temp[2 * plane + idx] = b / (ab + 0.12f);
     }
 }
 
-// Single pass of A-Trous Wavelet filter with adaptive sigmas & bilateral squared distances
+// single pass of a-trous wavelet filter with adaptive sigmas and bilateral distances
 __global__ void atrousFilterPassKernel(
     const float* __restrict__ input_img, const float* __restrict__ normal, const float* __restrict__ albedo,
     float* __restrict__ output_img,
@@ -53,26 +51,26 @@ __global__ void atrousFilterPassKernel(
         const int plane = width * height;
         const int centerIdx = y * width + x;
 
-        // Center pixel values (demodulated shading)
+        // center pixel values (demodulated shading)
         float center_r = input_img[centerIdx];
         float center_g = input_img[plane + centerIdx];
         float center_b = input_img[2 * plane + centerIdx];
         float center_lum = 0.299f * center_r + 0.587f * center_g + 0.114f * center_b;
 
-        // Center normal (normalize on the fly to avoid in-place input mutation)
+        // center normal normalized on the fly
         float c_nx = 2.0f * normal[centerIdx] - 1.0f;
         float c_ny = 2.0f * normal[plane + centerIdx] - 1.0f;
         float c_nz = 2.0f * normal[2 * plane + centerIdx] - 1.0f;
         float c_inv_len = rsqrtf(c_nx * c_nx + c_ny * c_ny + c_nz * c_nz + 1e-6f);
         c_nx *= c_inv_len; c_ny *= c_inv_len; c_nz *= c_inv_len;
 
-        // Center albedo (read to scale the color sigma adaptively)
+        // center albedo read for adaptive sigma
         float ar = albedo[centerIdx];
         float ag = albedo[plane + centerIdx];
         float ab = albedo[2 * plane + centerIdx];
         float c_a_gray = 0.299f * ar + 0.587f * ag + 0.114f * ab;
 
-        // Adaptive color sigma: scale up in dark albedo regions to handle higher noise amplification
+        // scale sigma in dark albedo regions for higher noise amplification
         float sigmaColorY = baseSigmaColor / (c_a_gray + 0.08f);
         sigmaColorY = fminf(2.0f, sigmaColorY);
 
@@ -81,7 +79,7 @@ __global__ void atrousFilterPassKernel(
         float sum_b = 0.0f;
         float sum_weight = 0.0f;
 
-        // 5x5 B-spline convolution
+        // 5x5 b-spline convolution
         #pragma unroll
         for (int dy = -2; dy <= 2; ++dy) {
             int qy = y + dy * stepSize;
@@ -98,13 +96,13 @@ __global__ void atrousFilterPassKernel(
 
                 const int qIdx = qy * width + qx;
 
-                // Sample shading values
+                // sample shading values
                 float q_r = input_img[qIdx];
                 float q_g = input_img[plane + qIdx];
                 float q_b = input_img[2 * plane + qIdx];
                 float q_lum = 0.299f * q_r + 0.587f * q_g + 0.114f * q_b;
 
-                // Normal difference (normalize on the fly)
+                // normal difference normalized on the fly
                 float q_nx = 2.0f * normal[qIdx] - 1.0f;
                 float q_ny = 2.0f * normal[plane + qIdx] - 1.0f;
                 float q_nz = 2.0f * normal[2 * plane + qIdx] - 1.0f;
@@ -114,11 +112,11 @@ __global__ void atrousFilterPassKernel(
                 float dot_n = c_nx * q_nx + c_ny * q_ny + c_nz * q_nz;
                 float dist_normal = fmaxf(0.0f, 1.0f - dot_n);
 
-                // Luminance difference (of demodulated shading)
+                // luminance difference of shading
                 float dlum = center_lum - q_lum;
                 float dist_lum_sq = dlum * dlum;
 
-                // Edge weights (Bilateral formulation)
+                // bilateral weights
                 float w_n = __expf(-dist_normal / (sigmaNormal * sigmaNormal + 1e-6f));
                 float w_cy = __expf(-dist_lum_sq / (2.0f * sigmaColorY * sigmaColorY + 1e-6f));
 
@@ -137,7 +135,7 @@ __global__ void atrousFilterPassKernel(
     }
 }
 
-// Reconstruct: convert back to RGB, modulate back, and clamp to [0, 1]
+// reconstruct: convert back to rgb, modulate back, and clamp
 __global__ void atrousReconstructKernel(
     const float* __restrict__ shading, const float* __restrict__ albedo, float* __restrict__ output,
     const int width, const int height)
@@ -156,12 +154,12 @@ __global__ void atrousReconstructKernel(
         float ag = albedo[plane + idx];
         float ab = albedo[2 * plane + idx];
 
-        // Modulate back (shading * albedo)
+        // modulate back
         float r = sr * (ar + 0.12f);
         float g = sg * (ag + 0.12f);
         float b = sb * (ab + 0.12f);
 
-        // Clamp final output to [0.0, 1.0]
+        // clamp output to [0, 1]
         output[idx] = fmaxf(0.0f, fminf(1.0f, r));
         output[plane + idx] = fmaxf(0.0f, fminf(1.0f, g));
         output[2 * plane + idx] = fmaxf(0.0f, fminf(1.0f, b));
@@ -179,30 +177,29 @@ void aTrousWaveletCUDA_NoAlloc(const float* d_input, const float* d_normal, cons
     dim3 grid((width + BLOCK_SIZE_X - 1) / BLOCK_SIZE_X, (height + BLOCK_SIZE_Y - 1) / BLOCK_SIZE_Y);
     (void)channels;
 
-    // 1. Preprocess: demodulate RGB, store in d_temp1
+    // preprocess: demodulate rgb, store in d_temp1
     atrousPrepareKernel<<<grid, threads>>>(d_input, d_normal, d_albedo, d_temp1, width, height);
 
-    // 2. Ping-pong A-Trous Wavelet filter passes
+    // ping-pong filter passes
     float* d_in_pass = d_temp1;
     float* d_out_pass = d_temp2;
 
     float currentSigmaColor = sigmaColor;
 
     for (int i = 0; i < passes; ++i) {
-        int stepSize = 1 << i; // 1, 2, 4, 8, 16...
+        int stepSize = 1 << i;
         atrousFilterPassKernel<<<grid, threads>>>(d_in_pass, d_normal, d_albedo, d_out_pass, width, height, stepSize, currentSigmaColor, sigmaNormal, sigmaAlbedo);
         
-        // Color guidance gets weaker (larger sigma) every iteration to allow more averaging
+        // relax color guidance every iteration
         currentSigmaColor *= 1.1f;
         
-        // Swap buffers for the next pass
+        // swap buffers
         std::swap(d_in_pass, d_out_pass);
     }
 
-    // 3. Reconstruct: modulate back, clamp, and write to d_output
+    // reconstruct: modulate back and clamp
     atrousReconstructKernel<<<grid, threads>>>(d_in_pass, d_albedo, d_output, width, height);
 }
-
 
 Image aTrousWaveletCUDA(const Image& input, const Image& normal, const Image& albedo, int passes, float sigmaColor, float sigmaNormal, float sigmaAlbedo) {
     const int width = input.getWidth();
@@ -220,6 +217,7 @@ Image aTrousWaveletCUDA(const Image& input, const Image& normal, const Image& al
     float* d_temp1 = nullptr;
     float* d_temp2 = nullptr;
 
+    // allocate memory in GPU
     cudaMalloc(&d_input, imgSize);
     cudaMalloc(&d_normal, imgSize);
     cudaMalloc(&d_albedo, imgSize);
@@ -227,6 +225,7 @@ Image aTrousWaveletCUDA(const Image& input, const Image& normal, const Image& al
     cudaMalloc(&d_temp1, imgSize);
     cudaMalloc(&d_temp2, imgSize);
 
+    // copy data from host to device
     cudaMemcpy(d_input, input.getData(), imgSize, cudaMemcpyHostToDevice);
     cudaMemcpy(d_normal, normal.getData(), imgSize, cudaMemcpyHostToDevice);
     cudaMemcpy(d_albedo, albedo.getData(), imgSize, cudaMemcpyHostToDevice);
@@ -234,8 +233,10 @@ Image aTrousWaveletCUDA(const Image& input, const Image& normal, const Image& al
     aTrousWaveletCUDA_NoAlloc(d_input, d_normal, d_albedo, d_output, d_temp1, d_temp2,
                               width, height, channels, passes, sigmaColor, sigmaNormal, sigmaAlbedo);
 
+    // copy the result back
     cudaMemcpy(output.getData(), d_output, imgSize, cudaMemcpyDeviceToHost);
 
+    // cleanup
     cudaFree(d_input);
     cudaFree(d_normal);
     cudaFree(d_albedo);

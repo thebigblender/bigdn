@@ -16,7 +16,7 @@
 
 namespace Benchmark {
 
-// Helper function to generate a synthetic image with noise for benchmarking
+// helper to generate synthetic image with noise
 Image generateSyntheticImage(int width, int height) {
     Image img(width, height, 3);
 
@@ -58,7 +58,7 @@ Image generateSyntheticImage(int width, int height) {
 void run(const std::string& imagePath, int kernelSize, int numRuns) {
     Image input;
 
-    // Load image
+    // load image
     if (!input.load(imagePath)) {
         std::string altPath = "../" + imagePath;
         if (!input.load(altPath)) {
@@ -67,7 +67,7 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
         }
     }
 
-    // Load GT image
+    // load gt image
     Image gt;
     bool has_gt = true;
     if (!gt.load("TEST_GT.png")) {
@@ -93,20 +93,20 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
 
     std::cout << "\nStarting nanobench benchmarks..." << std::endl;
 
-    // Set up nanobench
+    // set up nanobench
     ankerl::nanobench::Bench bench;
     bench.title("Mean Filter Denoising")
          .unit("evaluation")
          .relative(true)
          .epochs(5)
          .minEpochTime(std::chrono::milliseconds(100))
-         .output(nullptr); // Suppress default wide console table
+         .output(nullptr);
 
     if (numRuns > 0) {
         bench.minEpochIterations(numRuns);
     }
 
-    // Run Benchmarks
+    // run benchmarks
     bench.run("Mean ST", [&] {
         outputST = Filters::meanCPU_ST(input, kernelSize);
         ankerl::nanobench::doNotOptimizeAway(outputST.getData());
@@ -117,7 +117,7 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
         ankerl::nanobench::doNotOptimizeAway(outputOMP.getData());
     });
 
-    // Allocate GPU memory and copy input once before the benchmark loop
+    // allocate gpu memory
     int width = input.getWidth();
     int height = input.getHeight();
     int channels = input.getChannels();
@@ -125,7 +125,6 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
 
     int totalPixels = width * height * channels;
     float* d_workspace = nullptr;
-    // We allocate 15 image-sized buffers for the joint guided filter
     cudaMalloc(&d_workspace, 15 * imgSize);
 
     float* d_input          = d_workspace;
@@ -139,15 +138,14 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     float* d_temp1          = d_workspace + 8 * totalPixels;
     float* d_temp2          = d_workspace + 9 * totalPixels;
     
-    // Guided filter temps
+    // guided filter temps
     float* d_mean_I         = d_workspace + 10 * totalPixels;
     float* d_mean_II        = d_workspace + 11 * totalPixels;
     float* d_mean_Ip        = d_workspace + 12 * totalPixels;
     float* d_a              = d_workspace + 13 * totalPixels;
     float* d_b              = d_workspace + 14 * totalPixels;
 
-
-    // Load normal and albedo images for joint guided filter benchmarking
+    // load normal and albedo images
     Image normal;
     if (!normal.load("TEST_NORMAL.png")) {
         std::string altPath = "../TEST_NORMAL.png";
@@ -181,11 +179,11 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     cudaMemcpy(d_normal, normal.getData(), imgSize, cudaMemcpyHostToDevice);
     cudaMemcpy(d_albedo, albedo.getData(), imgSize, cudaMemcpyHostToDevice);
 
-    // Compute and copy 1D Gaussian kernel to GPU constant memory
+    // compute and copy 1d gaussian kernel
     const int radius = kernelSize / 2;
     std::vector<float> h_kernel(kernelSize);
     float kernelSum = 0.0f;
-    const float twoSigmaSq = 2.0f * 1.5f * 1.5f; // sigma = 1.5f
+    const float twoSigmaSq = 2.0f * 1.5f * 1.5f;
     for (int i = 0; i < kernelSize; ++i) {
         float x = static_cast<float>(i - radius);
         h_kernel[i] = std::exp(-(x * x) / twoSigmaSq);
@@ -219,7 +217,7 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
         cudaDeviceSynchronize();
     });
 
-    // Guided filter runs: use normal as guidance (instead of noisy image) and eps = 0.005
+    // guided filter runs
     bench.run("Guided ST", [&] {
         outputGuidedST = Filters::guidedCPU_ST(input, normal, kernelSize, 0.005f);
         ankerl::nanobench::doNotOptimizeAway(outputGuidedST.getData());
@@ -247,7 +245,7 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
         cudaDeviceSynchronize();
     });
 
-    // 5 passes of edge-preserving A-Trous Wavelet filter (sigmaColor=0.15, sigmaNormal=0.1, sigmaAlbedo=0.05)
+    // 5 passes of a-trous filter
     bench.run("A-Trous CUDA", [&] {
         Filters::aTrousWaveletCUDA_NoAlloc(d_input, d_normal, d_albedo, d_shading,
                                            d_temp1, d_temp2,
@@ -255,7 +253,7 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
         cudaDeviceSynchronize();
     });
 
-    // Copy separable outputs back to host and clean up GPU memory
+    // copy outputs back to host and clean up gpu memory
     cudaMemcpy(outputCUDA.getData(), d_output_mean, imgSize, cudaMemcpyDeviceToHost);
     cudaMemcpy(outputGaussianCUDA.getData(), d_output_gaussian, imgSize, cudaMemcpyDeviceToHost);
     cudaMemcpy(outputGuidedCUDA.getData(), d_output_guided, imgSize, cudaMemcpyDeviceToHost);
@@ -263,7 +261,7 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     cudaMemcpy(outputATrousCUDA.getData(), d_shading, imgSize, cudaMemcpyDeviceToHost);
     cudaFree(d_workspace);
 
-    // Save Output Images
+    // save output images
     outputST.save("output_ST.png");
     outputGaussianST.save("output_gaussian_ST.png");
     outputGuidedST.save("output_guided_ST.png");
@@ -276,7 +274,7 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     outputCUDA.save("output_CUDA.png");
     outputGaussianCUDA.save("output_gaussian_CUDA.png");
 
-    // Print Benchmark Summary Table (including Kernel Size and Cycles)
+    // print benchmark summary table
     const auto& results = bench.results();
     if (!results.empty()) {
         auto formatTime = [](double sec) {
@@ -332,7 +330,7 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
         std::cout << std::string(75, '=') << "\n";
     }
 
-    // Print Quality Metrics (All relative to the clean GT reference image if present)
+    // print quality metrics
     std::cout << "\n" << std::string(70, '=') << "\n";
     if (has_gt) {
         std::cout << " DENOISING QUALITY METRICS (Relative to clean TEST_GT.png)\n";

@@ -9,7 +9,7 @@
 #define COARSEN_L 4
 #define MAX_RADIUS 64
 
-// Constant memory for YCbCr conversion matrices
+// constant memory for ycbcr conversion matrices
 __constant__ float c_rgb2yuv[9] = {
      0.299000f,  0.587000f,  0.114000f,
     -0.168736f, -0.331264f,  0.500000f,
@@ -19,12 +19,7 @@ __constant__ float c_yuv2rgb[4] = {
     1.402000f, -0.344136f, -0.714136f, 1.772000f
 };
 
-// Step 1: Pre-process + Correlation Fusion (Vectorized float4)
-// 1. Unpack & normalize normal map to unit length.
-// 2. Compute combined guidance: G = 2.0 * N_gray + 0.5 * A_gray.
-// 3. Convert input RGB to YCbCr.
-// 4. Demodulate Y by (A_gray + 0.15) for bounded, stable scaling.
-// 5. Compute intermediate products G^2 (d_a) and G * Shading (d_b).
+// preprocess and correlation fusion (vectorized float4)
 __global__ void jointPrepareKernel(
     const float4* __restrict__ input, const float4* __restrict__ normal, const float4* __restrict__ albedo,
     float4* __restrict__ shading, float4* __restrict__ combined_guidance,
@@ -33,17 +28,17 @@ __global__ void jointPrepareKernel(
 {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size4) {
-        // Load beauty channels
+        // load beauty channels
         float4 r_v = input[idx];
         float4 g_v = input[idx + plane4];
         float4 b_v = input[idx + 2 * plane4];
 
-        // Load normal channels
+        // load normal channels
         float4 nx_v = normal[idx];
         float4 ny_v = normal[idx + plane4];
         float4 nz_v = normal[idx + 2 * plane4];
 
-        // Load albedo channels
+        // load albedo channels
         float4 ar_v = albedo[idx];
         float4 ag_v = albedo[idx + plane4];
         float4 ab_v = albedo[idx + 2 * plane4];
@@ -75,7 +70,7 @@ __global__ void jointPrepareKernel(
             float ab = (&ab_v.x)[i];
             float a_gray = c_rgb2yuv[0] * ar + c_rgb2yuv[1] * ag + c_rgb2yuv[2] * ab;
 
-            // Combined guidance: normal = 2.0, albedo = 0.5
+            // combined guidance
             float g_px = 2.0f * n_gray + 0.5f * a_gray;
             (&g_val.x)[i] = g_px;
 
@@ -83,21 +78,21 @@ __global__ void jointPrepareKernel(
             (&cb_val.x)[i] = c_rgb2yuv[3] * r + c_rgb2yuv[4] * g + c_rgb2yuv[5] * b + 0.5f;
             (&cr_val.x)[i] = c_rgb2yuv[6] * r + c_rgb2yuv[7] * g + c_rgb2yuv[8] * b + 0.5f;
 
-            // Regularized demodulation to completely prevent division halos
+            // demodulate shading by albedo
             (&shading_y.x)[i] = y_val / (a_gray + 0.15f);
         }
 
-        // Store combined guidance replicated to 3 channels directly without copies
+        // store combined guidance
         combined_guidance[idx] = g_val;
         combined_guidance[idx + plane4] = g_val;
         combined_guidance[idx + 2 * plane4] = g_val;
 
-        // Store Y, Cb, Cr in shading channels
+        // store shading
         shading[idx] = shading_y;
         shading[idx + plane4] = cb_val;
         shading[idx + 2 * plane4] = cr_val;
 
-        // Precompute G^2
+        // precompute g^2
         float4 g2;
         g2.x = g_val.x * g_val.x;
         g2.y = g_val.y * g_val.y;
@@ -108,7 +103,7 @@ __global__ void jointPrepareKernel(
         d_a[idx + plane4] = g2;
         d_a[idx + 2 * plane4] = g2;
 
-        // Precompute G * shading
+        // precompute g * shading
         float4 gp_y, gp_cb, gp_cr;
         gp_y.x = g_val.x * shading_y.x;
         gp_y.y = g_val.y * shading_y.y;
@@ -131,10 +126,7 @@ __global__ void jointPrepareKernel(
     }
 }
 
-// Step 8: Reconstruct and Convert back to RGB (Vectorized float4)
-// 1. Modulate Y by (A_gray + 0.15).
-// 2. Convert Y, Cb, Cr back to RGB.
-// 3. Clamp final output RGB to [0.0, 1.0].
+// reconstruct and convert back to rgb (vectorized float4)
 __global__ void jointReconstructKernel(
     const float4* __restrict__ shading, const float4* __restrict__ albedo, float4* __restrict__ output,
     const int size4, const int plane4)
@@ -163,15 +155,15 @@ __global__ void jointReconstructKernel(
 
             float a_gray = c_rgb2yuv[0] * ar + c_rgb2yuv[1] * ag + c_rgb2yuv[2] * ab;
 
-            // Modulate back (symmetric regularized scale)
+            // modulate back
             float y_val = sy * (a_gray + 0.15f);
 
-            // YCbCr to RGB
+            // ycbcr to rgb
             float r = y_val + c_yuv2rgb[0] * (cr_val - 0.5f);
             float g = y_val + c_yuv2rgb[1] * (cb_val - 0.5f) + c_yuv2rgb[2] * (cr_val - 0.5f);
             float b = y_val + c_yuv2rgb[3] * (cb_val - 0.5f);
 
-            // Clamp output strictly to [0.0, 1.0]
+            // clamp output to [0, 1]
             (&r_out.x)[i] = fmaxf(0.0f, fminf(1.0f, r));
             (&g_out.x)[i] = fmaxf(0.0f, fminf(1.0f, g));
             (&b_out.x)[i] = fmaxf(0.0f, fminf(1.0f, b));
@@ -183,7 +175,7 @@ __global__ void jointReconstructKernel(
     }
 }
 
-//box filter horizontal pass
+// box filter horizontal pass
 __global__ void jointBoxFilterHorizontalDualSharedKernel(
     const float* __restrict__ input1, const float* __restrict__ input2,
     float* __restrict__ temp1, float* __restrict__ temp2,
@@ -248,7 +240,7 @@ __global__ void jointBoxFilterHorizontalDualSharedKernel(
     }
 }
 
-//box filter vertical pass
+// box filter vertical pass
 __global__ void jointBoxFilterVerticalDualSharedKernel(
     const float* __restrict__ temp1, const float* __restrict__ temp2,
     float* __restrict__ output1, float* __restrict__ output2,
@@ -314,7 +306,7 @@ __global__ void jointBoxFilterVerticalDualSharedKernel(
     }
 }
 
-//box filter vertical pass fused with final output
+// box filter vertical pass fused with final output
 __global__ void jointBoxFilterVerticalDualAndFinalKernel(
     const float* __restrict__ temp_a, const float* __restrict__ temp_b,
     const float* __restrict__ guidance, float* __restrict__ output,
@@ -382,7 +374,7 @@ __global__ void jointBoxFilterVerticalDualAndFinalKernel(
     }
 }
 
-//helper to compute regression coeffs with ADAPTIVE epsilon: eps = 0.01 * var_I + 1e-4
+// compute regression coeffs with adaptive epsilon
 __global__ void jointComputeABKernel(
     const float4* __restrict__ mean_I, const float4* __restrict__ mean_p,
     const float4* __restrict__ mean_II, const float4* mean_Ip,
@@ -398,28 +390,28 @@ __global__ void jointComputeABKernel(
 
         float4 a_val, b_val;
 
-        // Channel X
+        // channel x
         float var_I_x = m_II.x - m_I.x * m_I.x;
         float cov_Ip_x = m_Ip.x - m_I.x * m_p.x;
         float eps_x = 0.01f * var_I_x + 1e-4f;
         a_val.x = cov_Ip_x / (var_I_x + eps_x);
         b_val.x = m_p.x - a_val.x * m_I.x;
 
-        // Channel Y
+        // channel y
         float var_I_y = m_II.y - m_I.y * m_I.y;
         float cov_Ip_y = m_Ip.y - m_I.y * m_p.y;
         float eps_y = 0.01f * var_I_y + 1e-4f;
         a_val.y = cov_Ip_y / (var_I_y + eps_y);
         b_val.y = m_p.y - a_val.y * m_I.y;
 
-        // Channel Z
+        // channel z
         float var_I_z = m_II.z - m_I.z * m_I.z;
         float cov_Ip_z = m_Ip.z - m_I.z * m_p.z;
         float eps_z = 0.01f * var_I_z + 1e-4f;
         a_val.z = cov_Ip_z / (var_I_z + eps_z);
         b_val.z = m_p.z - a_val.z * m_I.z;
 
-        // Channel W
+        // channel w
         float var_I_w = m_II.w - m_I.w * m_I.w;
         float cov_Ip_w = m_Ip.w - m_I.w * m_p.w;
         float eps_w = 0.01f * var_I_w + 1e-4f;
@@ -433,7 +425,7 @@ __global__ void jointComputeABKernel(
 
 namespace Filters {
 
-//helper to launch horizontal and vertical box filter passes
+// helper to launch horizontal and vertical box filter passes
 static void jointBoxFilterCUDADual(
     const float* d_input1, const float* d_input2,
     float* d_temp1, float* d_temp2,
@@ -463,12 +455,12 @@ void jointGuidedCUDA_NoAlloc(const float* d_input, const float* d_normal, const 
     const float invKernelSize = 1.0f / kernelSize;
     (void)eps;
 
-    // 1. Vectorized Prepare + element-wise IP/II Correlation Fusion
+    // prepare and correlation fusion
     const int plane = width * height;
     const int plane4 = plane / 4;
     const int planeGridSize = (plane4 + blockSize - 1) / blockSize;
     
-    // We write the combined guidance directly to d_mean_I channels inside the kernel (no copies needed)
+    // write guidance directly to d_mean_I
     jointPrepareKernel<<<planeGridSize, blockSize>>>(
         (const float4*)d_input, (const float4*)d_normal, (const float4*)d_albedo,
         (float4*)d_shading, (float4*)d_mean_I,
@@ -476,30 +468,30 @@ void jointGuidedCUDA_NoAlloc(const float* d_input, const float* d_normal, const 
         plane4 * 3, plane4
     );
 
-    // 3. Local means using d_mean_I as guidance and d_shading as input
-    // Outputs go to d_mean_II (mean of I) and d_output (mean of p)
+    // local means
+    // outputs go to mean_II and output
     jointBoxFilterCUDADual(d_mean_I, d_shading, d_temp1, d_temp2, d_mean_II, d_output, width, height, channels, kernelSize);
 
-    // 4. Box-filter the precomputed products d_a and d_b
-    // Outputs go to d_mean_Ip (mean of I^2) and d_a (mean of I*p)
+    // box filter precomputed products
+    // outputs go to mean_Ip and d_a
     jointBoxFilterCUDADual(d_a, d_b, d_temp1, d_temp2, d_mean_Ip, d_a, width, height, channels, kernelSize);
 
-    // 5. Compute regression coefficients
-    // We pass: mean_I (d_mean_II), mean_p (d_output), mean_II (d_mean_Ip), mean_Ip (d_a)
-    // Outputs go to d_a, d_b
+    // compute regression coefficients
+    // pass intermediate means
+    // outputs go to d_a and d_b
     jointComputeABKernel<<<gridSize, blockSize>>>((const float4*)d_mean_II, (const float4*)d_output, (const float4*)d_mean_Ip, (const float4*)d_a, (float4*)d_a, (float4*)d_b, size4);
 
-    // 6. Average the coefficients over local windows
+    // average coefficients over local windows
     dim3 hThreads(BLOCK_SIZE_X, BLOCK_SIZE_Y, 1);
     dim3 hGrid((width + BLOCK_SIZE_X * COARSEN_L - 1) / (BLOCK_SIZE_X * COARSEN_L), (height + BLOCK_SIZE_Y - 1) / BLOCK_SIZE_Y, channels);
     jointBoxFilterHorizontalDualSharedKernel<<<hGrid, hThreads>>>(d_a, d_b, d_temp1, d_temp2, width, height, channels, kernelSize, invKernelSize);
 
-    // 7. Vertical pass and compute filtered shading (write output to d_shading)
+    // vertical pass and compute filtered shading
     dim3 vThreads(BLOCK_SIZE_X, BLOCK_SIZE_Y, 1);
     dim3 vGrid((width + BLOCK_SIZE_X - 1) / BLOCK_SIZE_X, (height + BLOCK_SIZE_Y * COARSEN_L - 1) / (BLOCK_SIZE_Y * COARSEN_L), channels);
     jointBoxFilterVerticalDualAndFinalKernel<<<vGrid, vThreads>>>(d_temp1, d_temp2, d_mean_I, d_shading, width, height, channels, kernelSize, invKernelSize);
 
-    // 8. Vectorized Reconstruct: Convert YCbCr back to RGB, modulate Y, clamp and store in d_output
+    // reconstruct: convert to rgb, modulate, clamp, and store
     jointReconstructKernel<<<planeGridSize, blockSize>>>(
         (const float4*)d_shading, (const float4*)d_albedo, (float4*)d_output,
         plane4, plane4
@@ -516,6 +508,7 @@ Image jointGuidedCUDA(const Image& input, const Image& normal, const Image& albe
     Image output(width, height, channels);
 
     float* d_workspace = nullptr;
+    // allocate memory in GPU
     cudaMalloc(&d_workspace, 15 * imgSize);
 
     float* d_input   = d_workspace;
@@ -531,6 +524,7 @@ Image jointGuidedCUDA(const Image& input, const Image& normal, const Image& albe
     float* d_a       = d_workspace + 10 * totalPixels;
     float* d_b       = d_workspace + 11 * totalPixels;
 
+    // copy data from host to device
     cudaMemcpy(d_input, input.getData(), imgSize, cudaMemcpyHostToDevice);
     cudaMemcpy(d_normal, normal.getData(), imgSize, cudaMemcpyHostToDevice);
     cudaMemcpy(d_albedo, albedo.getData(), imgSize, cudaMemcpyHostToDevice);
@@ -540,8 +534,10 @@ Image jointGuidedCUDA(const Image& input, const Image& normal, const Image& albe
                             d_a, d_b,
                             width, height, channels, kernelSize, eps);
 
+    // copy the result back
     cudaMemcpy(output.getData(), d_output, imgSize, cudaMemcpyDeviceToHost);
 
+    // cleanup
     cudaFree(d_workspace);
 
     return output;
