@@ -34,21 +34,22 @@ This will configure CMake and compile the executable into the build directory.
 Run the benchmark executable using the compiled binary.
 
 ### Options
-
-* -h, --help            Show help message and exit
-* -f, --filter <name>   Filter to run: mean, gaussian, guided, joint_guided, atrous, or benchmark (default: benchmark)
-* -d, --device <name>   Execution device/implementation: cpu, omp, or cuda (default: cuda)
-* -i, --input <path>    Noisy beauty input image path (default: TEST.png)
-* -n, --normal <path>   Normal map input image path (default: TEST_NORMAL.png)
-* -a, --albedo <path>   Albedo map input image path (default: TEST_ALBEDO.png)
-* -o, --output <path>   Denoised output image path (default: denoised.png)
-* -g, --gt <path>       Clean ground truth image path for metric computation (default: TEST_GT.png)
-* -k, --kernel-size <N> Kernel size (must be a positive odd integer, default: 15)
-* -p, --passes <N>      Number of A Trous passes (default: 5)
-* -sc, --sigma-color <V> Color sigma parameter (default: 0.15)
-* -sn, --sigma-normal <V> Normal sigma parameter (default: 0.1)
-* -sa, --sigma-albedo <V> Albedo sigma parameter (default: 0.05)
-* -r, --runs <N>        Number of iterations to run during benchmark mode (default: 5)
+```bash
+-h, --help            #Show help message and exit
+-f, --filter <name>   #Filter to run: mean, gaussian, guided, joint_guided, atrous, or benchmark (default: benchmark)
+-d, --device <name>   #Execution device/implementation: cpu, omp, or cuda (default: cuda)
+-i, --input <path>    #Noisy beauty input image path (default: TEST.png)
+-n, --normal <path>   #Normal map input image path (default: TEST_NORMAL.png)
+-a, --albedo <path>   #Albedo map input image path (default: TEST_ALBEDO.png)
+-o, --output <path>   #Denoised output image path (default: denoised.png)
+-g, --gt <path>       #Clean ground truth image path for metric computation (default: TEST_GT.png)
+-k, --kernel-size <N> #Kernel size (must be a positive odd integer, default: 15)
+-p, --passes <N>      #Number of A Trous passes (default: 5)
+-sc, --sigma-color <V> #Color sigma parameter (default: 0.15)
+-sn, --sigma-normal <V> #Normal sigma parameter (default: 0.1)
+-sa, --sigma-albedo <V> #Albedo sigma parameter (default: 0.05)
+-r, --runs <N>        #Number of iterations to run during benchmark mode (default: 5)
+```
 
 ### Running Benchmark Mode
 
