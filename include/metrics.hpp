@@ -3,5 +3,5 @@
 
 namespace Metrics {
     float calculatePSNR(const Image& original, const Image& denoised);
-    float calculateSSIM(const Image& original, const Image& denoised);
+    float calculateMSSIM(const Image& original, const Image& denoised);
 }

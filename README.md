@@ -2,7 +2,7 @@
 
 A benchmarking toolkit comparing various CPU, OpenMP, and CUDA implementations of classical image denoising algorithms, specifically targetting Monte-Carlo render noise.
 
-# Known Issues
+## Known Issues
 
 * Classical edge preserving filters (Guided, Joint Guided, A Trous) have a hard mathematical limit distinguishing high frequency noise from true details, which can leave splotchiness in high noise renders.
 * The Joint Guided and A Trous filters are only supported on the CUDA device(blame my laziness).
@@ -70,8 +70,8 @@ To run the CUDA A Trous denoiser on custom images:
 
 Below are the quality metrics obtained relative to the clean reference image:
 
-* Mean Filter: 28.23 dB PSNR, 0.9837 SSIM
-* Gaussian Filter: 34.49 dB PSNR, 0.9963 SSIM
-* Guided Filter: 28.20 dB PSNR, 0.9836 SSIM
-* Joint Guided Filter 7x7 kernel: 32.7957 dB PSNR, 0.9944 SSIM 
-* A Trous Wavelet Filter (4, 0.1, 0.15): 33.5894 dB PSNR, 0.9954 SSIM
+* Mean Filter: 28.23 dB PSNR, 0.9807 MS-SSIM
+* Gaussian Filter: 34.49 dB PSNR, 0.9885 MS-SSIM
+* Guided Filter: 28.20 dB PSNR, 0.9898 MS-SSIM
+* Joint Guided Filter 5x5 kernel: 35.7724 dB PSNR, 0.9989 MS-SSIM 
+* A Trous Wavelet Filter (4, 0.1, 0.15): 33.6352 dB PSNR, 0.9985 MS-SSIM

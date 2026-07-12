@@ -214,10 +214,10 @@ int main(int argc, char* argv[]) {
         Image gt;
         if (gt.load(gtPath)) {
             float psnr = Metrics::calculatePSNR(gt, output);
-            float ssim = Metrics::calculateSSIM(gt, output);
+            float msssim = Metrics::calculateMSSIM(gt, output);
             std::cout << "\nQuality Metrics (relative to " << gtPath << "):\n"
                       << "  PSNR: " << psnr << " dB\n"
-                      << "  SSIM: " << ssim << "\n";
+                      << "  MS-SSIM: " << msssim << "\n";
         }
     } else {
         std::cout << "Running benchmark mode on: " << inputPath << "\n";

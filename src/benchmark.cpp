@@ -340,15 +340,15 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     std::cout << std::string(70, '-') << "\n";
     std::cout << std::left << std::setw(25) << " Implementation"
               << std::right << std::setw(18) << "PSNR (dB)"
-              << std::setw(18) << "SSIM" << "\n";
+              << std::setw(18) << "MS-SSIM" << "\n";
     std::cout << std::string(70, '-') << "\n";
 
     auto printMetricRow = [&](const std::string& name, const Image& output) {
         float psnr = Metrics::calculatePSNR(gt, output);
-        float ssim = Metrics::calculateSSIM(gt, output);
+        float msssim = Metrics::calculateMSSIM(gt, output);
         std::cout << std::left << " " << std::setw(24) << name
                   << std::right << std::fixed << std::setprecision(2) << std::setw(18) << psnr
-                  << std::setprecision(4) << std::setw(18) << ssim << "\n";
+                  << std::setprecision(4) << std::setw(18) << msssim << "\n";
     };
 
     printMetricRow("Single-Threaded (ST)", outputST);
