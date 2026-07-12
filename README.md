@@ -59,15 +59,6 @@ Below is an example of the quality metrics obtained relative to the clean refere
 * Joint Guided Filter 5x5 kernel: 35.7724 dB PSNR, 0.9989 MS-SSIM 
 * A Trous Wavelet Filter (3, 0.18, 0.15): 33.6352 dB PSNR, 0.9985 MS-SSIM
 
-
-## Algorithms Implemented
-
-* Mean Filter (CPU Single Threaded, OpenMP, CUDA)
-* Gaussian Filter (CPU Single Threaded, OpenMP, CUDA)
-* Guided Filter (CPU Single Threaded, OpenMP, CUDA)
-* Joint Guided Filter (CUDA)
-* A Trous Wavelet Filter (CUDA)
-
 ## Known Issues
 
 * Classical edge preserving filters (Guided, Joint Guided, A Trous) have a hard mathematical limit distinguishing high frequency noise from true details, which can leave splotchiness in high noise renders.
