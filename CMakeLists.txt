@@ -63,20 +63,22 @@ if(CUDA_ENABLED)
         src/filters/mean_CUDA.cu
         src/filters/gaussian_CUDA.cu
         src/filters/guided_CUDA.cu
+        src/filters/joint_guided_CUDA.cu
+        src/filters/ATrousWavelet_CUDA.cu
     )
 endif()
 
 # Executable target
-add_executable(denoiser_toolkit ${SOURCES})
+add_executable(bigdn ${SOURCES})
 
 # Target properties & linking
-target_link_libraries(denoiser_toolkit
+target_link_libraries(bigdn
     PRIVATE
         OpenMP::OpenMP_CXX
 )
 
 if(CUDA_ENABLED)
-    target_link_libraries(denoiser_toolkit
+    target_link_libraries(bigdn
         PRIVATE
             CUDA::cudart
     )
@@ -84,7 +86,7 @@ endif()
 
 # Optional: Enable max warnings for quality
 if(MSVC)
-    target_compile_options(denoiser_toolkit PRIVATE /W4)
+    target_compile_options(bigdn PRIVATE /W4)
 else()
-    target_compile_options(denoiser_toolkit PRIVATE -Wall -Wextra -O3)
+    target_compile_options(bigdn PRIVATE -Wall -Wextra -O3)
 endif()

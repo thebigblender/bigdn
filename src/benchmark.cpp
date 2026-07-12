@@ -67,11 +67,25 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
         }
     }
 
+    // Load GT image
+    Image gt;
+    bool has_gt = true;
+    if (!gt.load("TEST_GT.png")) {
+        std::string altPath = "../TEST_GT.png";
+        if (!gt.load(altPath)) {
+            std::cout << "Warning: Failed to load GT image: TEST_GT.png. Falling back to noisy input for metrics." << std::endl;
+            gt = input;
+            has_gt = false;
+        }
+    }
+
     Image outputST(input.getWidth(), input.getHeight(), input.getChannels());
     Image outputGaussianST(input.getWidth(), input.getHeight(), input.getChannels());
     Image outputGuidedST(input.getWidth(), input.getHeight(), input.getChannels());
     Image outputGuidedOMP(input.getWidth(), input.getHeight(), input.getChannels());
     Image outputGuidedCUDA(input.getWidth(), input.getHeight(), input.getChannels());
+    Image outputJointGuidedCUDA(input.getWidth(), input.getHeight(), input.getChannels());
+    Image outputATrousCUDA(input.getWidth(), input.getHeight(), input.getChannels());
     Image outputOMP(input.getWidth(), input.getHeight(), input.getChannels());
     Image outputGaussianOMP(input.getWidth(), input.getHeight(), input.getChannels());
     Image outputCUDA(input.getWidth(), input.getHeight(), input.getChannels());
@@ -111,19 +125,61 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
 
     int totalPixels = width * height * channels;
     float* d_workspace = nullptr;
-    cudaMalloc(&d_workspace, 11 * imgSize);
+    // We allocate 15 image-sized buffers for the joint guided filter
+    cudaMalloc(&d_workspace, 15 * imgSize);
 
-    float* d_input = d_workspace;
-    float* d_temp1 = d_workspace + totalPixels;
-    float* d_temp2 = d_workspace + 2 * totalPixels;
-    float* d_output_mean = d_workspace + 3 * totalPixels;
-    float* d_output_gaussian = d_workspace + 4 * totalPixels;
-    float* d_output_guided = d_workspace + 5 * totalPixels;
-    float* d_mean_I = d_workspace + 6 * totalPixels;
-    float* d_mean_II = d_workspace + 7 * totalPixels;
-    float* d_mean_Ip = d_workspace + 8 * totalPixels;
-    float* d_a = d_workspace + 9 * totalPixels;
-    float* d_b = d_workspace + 10 * totalPixels;
+    float* d_input          = d_workspace;
+    float* d_normal         = d_workspace + totalPixels;
+    float* d_albedo         = d_workspace + 2 * totalPixels;
+    float* d_output_mean    = d_workspace + 3 * totalPixels;
+    float* d_output_gaussian= d_workspace + 4 * totalPixels;
+    float* d_output_guided  = d_workspace + 5 * totalPixels;
+    float* d_output_jg      = d_workspace + 6 * totalPixels;
+    float* d_shading        = d_workspace + 7 * totalPixels;
+    float* d_temp1          = d_workspace + 8 * totalPixels;
+    float* d_temp2          = d_workspace + 9 * totalPixels;
+    
+    // Guided filter temps
+    float* d_mean_I         = d_workspace + 10 * totalPixels;
+    float* d_mean_II        = d_workspace + 11 * totalPixels;
+    float* d_mean_Ip        = d_workspace + 12 * totalPixels;
+    float* d_a              = d_workspace + 13 * totalPixels;
+    float* d_b              = d_workspace + 14 * totalPixels;
+
+
+    // Load normal and albedo images for joint guided filter benchmarking
+    Image normal;
+    if (!normal.load("TEST_NORMAL.png")) {
+        std::string altPath = "../TEST_NORMAL.png";
+        if (!normal.load(altPath)) {
+            std::cerr << "Error: Failed to load normal image: TEST_NORMAL.png" << std::endl;
+            exit(1);
+        }
+    }
+
+    Image albedo;
+    if (!albedo.load("TEST_ALBEDO.png")) {
+        std::string altPath = "../TEST_ALBEDO.png";
+        if (!albedo.load(altPath)) {
+            std::cerr << "Error: Failed to load albedo image: TEST_ALBEDO.png" << std::endl;
+            exit(1);
+        }
+    }
+
+    if (normal.getWidth() != width || normal.getHeight() != height || normal.getChannels() != channels) {
+        std::cerr << "Error: Normal image dimensions (" << normal.getWidth() << "x" << normal.getHeight() 
+                  << ") mismatch input (" << width << "x" << height << ")" << std::endl;
+        exit(1);
+    }
+    if (albedo.getWidth() != width || albedo.getHeight() != height || albedo.getChannels() != channels) {
+        std::cerr << "Error: Albedo image dimensions (" << albedo.getWidth() << "x" << albedo.getHeight() 
+                  << ") mismatch input (" << width << "x" << height << ")" << std::endl;
+        exit(1);
+    }
+
+    cudaMemcpy(d_input, input.getData(), imgSize, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_normal, normal.getData(), imgSize, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_albedo, albedo.getData(), imgSize, cudaMemcpyHostToDevice);
 
     // Compute and copy 1D Gaussian kernel to GPU constant memory
     const int radius = kernelSize / 2;
@@ -163,21 +219,39 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
         cudaDeviceSynchronize();
     });
 
+    // Guided filter runs: use normal as guidance (instead of noisy image) and eps = 0.005
     bench.run("Guided ST", [&] {
-        outputGuidedST = Filters::guidedCPU_ST(input, input, kernelSize, 0.04f);
+        outputGuidedST = Filters::guidedCPU_ST(input, normal, kernelSize, 0.005f);
         ankerl::nanobench::doNotOptimizeAway(outputGuidedST.getData());
     });
 
     bench.run("Guided OMP", [&] {
-        outputGuidedOMP = Filters::guidedCPU_OMP(input, input, kernelSize, 0.04f);
+        outputGuidedOMP = Filters::guidedCPU_OMP(input, normal, kernelSize, 0.005f);
         ankerl::nanobench::doNotOptimizeAway(outputGuidedOMP.getData());
     });
 
     bench.run("Guided CUDA", [&] {
-        Filters::guidedCUDA_NoAlloc(d_input, d_input, d_output_guided, d_temp1, d_temp2,
+        Filters::guidedCUDA_NoAlloc(d_input, d_normal, d_output_guided, d_temp1, d_temp2,
                                     d_mean_I, d_mean_II, d_mean_Ip,
                                     d_a, d_b,
-                                    width, height, channels, kernelSize, 0.04f);
+                                    width, height, channels, kernelSize, 0.005f);
+        cudaDeviceSynchronize();
+    });
+
+    bench.run("Joint Guided CUDA", [&] {
+        Filters::jointGuidedCUDA_NoAlloc(d_input, d_normal, d_albedo, d_output_jg,
+                                        d_shading, d_temp1, d_temp2,
+                                        d_mean_I, d_mean_II, d_mean_Ip,
+                                        d_a, d_b,
+                                        width, height, channels, kernelSize, 0.005f);
+        cudaDeviceSynchronize();
+    });
+
+    // 5 passes of edge-preserving A-Trous Wavelet filter (sigmaColor=0.15, sigmaNormal=0.1, sigmaAlbedo=0.05)
+    bench.run("A-Trous CUDA", [&] {
+        Filters::aTrousWaveletCUDA_NoAlloc(d_input, d_normal, d_albedo, d_shading,
+                                           d_temp1, d_temp2,
+                                           width, height, channels, 5, 0.15f, 0.1f, 0.05f);
         cudaDeviceSynchronize();
     });
 
@@ -185,6 +259,8 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     cudaMemcpy(outputCUDA.getData(), d_output_mean, imgSize, cudaMemcpyDeviceToHost);
     cudaMemcpy(outputGaussianCUDA.getData(), d_output_gaussian, imgSize, cudaMemcpyDeviceToHost);
     cudaMemcpy(outputGuidedCUDA.getData(), d_output_guided, imgSize, cudaMemcpyDeviceToHost);
+    cudaMemcpy(outputJointGuidedCUDA.getData(), d_output_jg, imgSize, cudaMemcpyDeviceToHost);
+    cudaMemcpy(outputATrousCUDA.getData(), d_shading, imgSize, cudaMemcpyDeviceToHost);
     cudaFree(d_workspace);
 
     // Save Output Images
@@ -193,6 +269,8 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     outputGuidedST.save("output_guided_ST.png");
     outputGuidedOMP.save("output_guided_OMP.png");
     outputGuidedCUDA.save("output_guided_CUDA.png");
+    outputJointGuidedCUDA.save("output_joint_guided_CUDA.png");
+    outputATrousCUDA.save("output_atrous_CUDA.png");
     outputOMP.save("output_OMP.png");
     outputGaussianOMP.save("output_gaussian_OMP.png");
     outputCUDA.save("output_CUDA.png");
@@ -254,9 +332,13 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
         std::cout << std::string(75, '=') << "\n";
     }
 
-    // Print Quality Metrics (All relative to the original noisy input image)
+    // Print Quality Metrics (All relative to the clean GT reference image if present)
     std::cout << "\n" << std::string(70, '=') << "\n";
-    std::cout << " DENOISING QUALITY METRICS (Relative to original noisy input)\n";
+    if (has_gt) {
+        std::cout << " DENOISING QUALITY METRICS (Relative to clean TEST_GT.png)\n";
+    } else {
+        std::cout << " DENOISING QUALITY METRICS (Relative to original noisy input)\n";
+    }
     std::cout << std::string(70, '-') << "\n";
     std::cout << std::left << std::setw(25) << " Implementation"
               << std::right << std::setw(18) << "PSNR (dB)"
@@ -264,8 +346,8 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     std::cout << std::string(70, '-') << "\n";
 
     auto printMetricRow = [&](const std::string& name, const Image& output) {
-        float psnr = Metrics::calculatePSNR(input, output);
-        float ssim = Metrics::calculateSSIM(input, output);
+        float psnr = Metrics::calculatePSNR(gt, output);
+        float ssim = Metrics::calculateSSIM(gt, output);
         std::cout << std::left << " " << std::setw(24) << name
                   << std::right << std::fixed << std::setprecision(2) << std::setw(18) << psnr
                   << std::setprecision(4) << std::setw(18) << ssim << "\n";
@@ -282,6 +364,8 @@ void run(const std::string& imagePath, int kernelSize, int numRuns) {
     printMetricRow("Guided ST", outputGuidedST);
     printMetricRow("Guided OMP", outputGuidedOMP);
     printMetricRow("Guided CUDA", outputGuidedCUDA);
+    printMetricRow("Joint Guided CUDA", outputJointGuidedCUDA);
+    printMetricRow("A-Trous CUDA", outputATrousCUDA);
     std::cout << std::string(70, '=') << "\n\n";
 }
 

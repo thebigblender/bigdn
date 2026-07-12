@@ -27,6 +27,18 @@ namespace Filters {
                             float* d_temp1, float* d_temp2, float* d_mean_I, float* d_mean_II, float* d_mean_Ip,
                             float* d_a, float* d_b,
                             int width, int height, int channels, int kernelSize, float eps);
+    
+    Image jointGuidedCUDA(const Image& input, const Image& normal, const Image& albedo, int kernelSize, float eps);
+    void jointGuidedCUDA_NoAlloc(const float* d_input, const float* d_normal, const float* d_albedo, float* d_output,
+                                float* d_shading, float* d_temp1, float* d_temp2, float* d_mean_I, float* d_mean_II, float* d_mean_Ip,
+                                float* d_a, float* d_b,
+                                int width, int height, int channels, int kernelSize, float eps);
+
+    Image aTrousWaveletCUDA(const Image& input, const Image& normal, const Image& albedo, int passes, float sigmaColor, float sigmaNormal, float sigmaAlbedo);
+    void aTrousWaveletCUDA_NoAlloc(const float* d_input, const float* d_normal, const float* d_albedo, float* d_output,
+                                  float* d_temp1, float* d_temp2,
+                                  int width, int height, int channels, int passes,
+                                  float sigmaColor, float sigmaNormal, float sigmaAlbedo);
 
     Image nlmCPU(const Image& input, int searchWindowSize, int patchSize, float h);
 }
