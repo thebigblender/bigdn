@@ -37,7 +37,10 @@ static char g_albedoPath[512] = "TEST_ALBEDO.png";
 static char g_gtPath[512] = "TEST_GT.png";
 
 static int g_filterIdx = 4; // default to a-trous
-static const char* g_filters[] = { "Mean", "Gaussian", "Guided", "Joint Guided", "A-Trous" };
+static const char* g_filters[] = { "Mean", "Gaussian", "Guided", "Joint Guided", "A-Trous", "Masked Median + A-Trous" };
+
+static int g_medianKernelSize = 3;
+static float g_medianThreshold = 0.05f;
 
 static int g_deviceIdx = 2; // default to cuda
 static const char* g_devices[] = { "CPU", "OpenMP", "CUDA" };
@@ -171,6 +174,8 @@ static void runFiltering() {
             g_denoisedImg = Filters::jointGuidedCUDA(g_inputImg, g_normalImg, g_albedoImg, g_kernelSize, g_eps);
         } else if (g_filterIdx == 4) { // A-Trous
             g_denoisedImg = Filters::aTrousWaveletCUDA(g_inputImg, g_normalImg, g_albedoImg, g_passes, g_sigmaColor, g_sigmaNormal, g_sigmaAlbedo);
+        } else if (g_filterIdx == 5) { // Masked Median + A-Trous
+            g_denoisedImg = Filters::maskedMedianAtrousCUDA(g_inputImg, g_normalImg, g_albedoImg, g_passes, g_sigmaColor, g_sigmaNormal, g_sigmaAlbedo, g_medianKernelSize, g_medianThreshold);
         }
 
         if (g_gtLoaded) {
@@ -333,7 +338,7 @@ void launch() {
             }
         }
 
-        if (g_filterIdx == 4) {
+        if (g_filterIdx == 4 || g_filterIdx == 5) {
             if (ImGui::SliderInt("Passes", &g_passes, 1, 10)) {
                 paramsChanged = true;
             }
@@ -341,6 +346,17 @@ void launch() {
                 paramsChanged = true;
             }
             if (ImGui::SliderFloat("Sigma Normal", &g_sigmaNormal, 0.01f, 1.0f, "%.2f")) {
+                paramsChanged = true;
+            }
+        }
+
+        if (g_filterIdx == 5) {
+            int oldMK = g_medianKernelSize;
+            if (ImGui::SliderInt("Median Kernel Size", &g_medianKernelSize, 3, 5)) {
+                if (g_medianKernelSize % 2 == 0) g_medianKernelSize = (g_medianKernelSize < 4) ? 3 : 5;
+                if (g_medianKernelSize != oldMK) paramsChanged = true;
+            }
+            if (ImGui::SliderFloat("Median Threshold", &g_medianThreshold, 0.001f, 0.5f, "%.3f")) {
                 paramsChanged = true;
             }
         }
@@ -452,6 +468,15 @@ void launch() {
                 bench.run("A-Trous CUDA", [&] { out = Filters::aTrousWaveletCUDA(g_inputImg, g_normalImg, g_albedoImg, g_passes, g_sigmaColor, g_sigmaNormal, g_sigmaAlbedo); });
                 double t = bench.results().front().median(ankerl::nanobench::Result::Measure::elapsed);
                 addBenchResult("A-Trous CUDA", t, bench.results().front().medianAbsolutePercentError(ankerl::nanobench::Result::Measure::elapsed) * 100.0, guidedStTime / t, out);
+            }
+            // Masked Median + A-Trous CUDA
+            {
+                ankerl::nanobench::Bench bench;
+                bench.epochs(3).minEpochTime(std::chrono::milliseconds(20)).output(nullptr);
+                Image out;
+                bench.run("Masked Median + A-Trous CUDA", [&] { out = Filters::maskedMedianAtrousCUDA(g_inputImg, g_normalImg, g_albedoImg, g_passes, g_sigmaColor, g_sigmaNormal, g_sigmaAlbedo, g_medianKernelSize, g_medianThreshold); });
+                double t = bench.results().front().median(ankerl::nanobench::Result::Measure::elapsed);
+                addBenchResult("Masked Median + A-Trous CUDA", t, bench.results().front().medianAbsolutePercentError(ankerl::nanobench::Result::Measure::elapsed) * 100.0, guidedStTime / t, out);
             }
 
             g_runBenchmarkTriggered = false;

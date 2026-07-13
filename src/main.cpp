@@ -12,7 +12,7 @@ void printHelp() {
               << "Options:\n"
               << "  -h, --help            Show this help message and exit\n"
               << "  --gui                 Launch the interactive graphical user interface (default if no options are specified)\n"
-              << "  -f, --filter <name>   Filter to run: mean, gaussian, guided, joint_guided, atrous, or benchmark (default: benchmark)\n"
+              << "  -f, --filter <name>   Filter to run: mean, gaussian, guided, joint_guided, atrous, masked_atrous, or benchmark (default: benchmark)\n"
               << "  -d, --device <name>   Execution device/implementation: cpu, omp, or cuda (default: cuda)\n"
               << "  -i, --input <path>    Noisy beauty input image path (default: TEST.png)\n"
               << "  -n, --normal <path>   Normal map input image path (default: TEST_NORMAL.png)\n"
@@ -24,6 +24,8 @@ void printHelp() {
               << "  -sc, --sigma-color <V> Color sigma parameter (default: 0.15)\n"
               << "  -sn, --sigma-normal <V> Normal sigma parameter (default: 0.1)\n"
               << "  -sa, --sigma-albedo <V> Albedo sigma parameter (default: 0.05)\n"
+              << "  -mk, --median-kernel <N> Median kernel size (3 or 5, default: 3)\n"
+              << "  -mt, --median-threshold <V> Median outlier threshold (default: 0.05)\n"
               << "  -r, --runs <N>        Number of iterations to run during benchmark mode (default: 5)\n";
 }
 
@@ -47,6 +49,8 @@ int main(int argc, char* argv[]) {
     float sigmaColor = 0.15f;
     float sigmaNormal = 0.1f;
     float sigmaAlbedo = 0.05f;
+    int medianKernelSize = 3;
+    float medianThreshold = 0.05f;
     int numRuns = 5;
     bool launchGui = false;
 
@@ -106,6 +110,20 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Error: Invalid albedo sigma.\n";
                 return 1;
             }
+        } else if ((arg == "-mk" || arg == "--median-kernel") && i + 1 < argc) {
+            try {
+                medianKernelSize = std::stoi(argv[++i]);
+            } catch (...) {
+                std::cerr << "Error: Invalid median kernel size.\n";
+                return 1;
+            }
+        } else if ((arg == "-mt" || arg == "--median-threshold") && i + 1 < argc) {
+            try {
+                medianThreshold = std::stof(argv[++i]);
+            } catch (...) {
+                std::cerr << "Error: Invalid median threshold.\n";
+                return 1;
+            }
         } else if ((arg == "-r" || arg == "--runs") && i + 1 < argc) {
             try {
                 numRuns = std::stoi(argv[++i]);
@@ -155,13 +173,13 @@ int main(int argc, char* argv[]) {
         Image albedo;
 
         // Load normal and albedo guide maps if required by the filter
-        if (filter == "guided" || filter == "joint_guided" || filter == "atrous") {
+        if (filter == "guided" || filter == "joint_guided" || filter == "atrous" || filter == "masked_atrous") {
             if (!normal.load(normalPath)) {
                 std::cerr << "Error: Failed to load normal image: " << normalPath << "\n";
                 return 1;
             }
         }
-        if (filter == "joint_guided" || filter == "atrous") {
+        if (filter == "joint_guided" || filter == "atrous" || filter == "masked_atrous") {
             if (!albedo.load(albedoPath)) {
                 std::cerr << "Error: Failed to load albedo image: " << albedoPath << "\n";
                 return 1;
@@ -215,6 +233,12 @@ int main(int argc, char* argv[]) {
                 device = "cuda";
             }
             output = Filters::aTrousWaveletCUDA(input, normal, albedo, passes, sigmaColor, sigmaNormal, sigmaAlbedo);
+        } else if (filter == "masked_atrous" || filter == "masked_median_atrous") {
+            if (device != "cuda") {
+                std::cout << "Warning: Masked Median + A-Trous Wavelet filter is CUDA-only. Falling back to CUDA.\n";
+                device = "cuda";
+            }
+            output = Filters::maskedMedianAtrousCUDA(input, normal, albedo, passes, sigmaColor, sigmaNormal, sigmaAlbedo, medianKernelSize, medianThreshold);
         } else {
             std::cerr << "Error: Unknown filter type '" << filter << "'.\n";
             printHelp();

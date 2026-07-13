@@ -93,6 +93,7 @@ if(CUDA_ENABLED)
         src/filters/guided_CUDA.cu
         src/filters/joint_guided_CUDA.cu
         src/filters/ATrousWavelet_CUDA.cu
+        src/filters/masked_median_atrous_CUDA.cu
     )
 endif()
 

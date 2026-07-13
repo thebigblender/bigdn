@@ -40,5 +40,9 @@ namespace Filters {
                                   int width, int height, int channels, int passes,
                                   float sigmaColor, float sigmaNormal, float sigmaAlbedo);
 
+    Image maskedMedianAtrousCUDA(const Image& input, const Image& normal, const Image& albedo,
+                                 int passes, float sigmaColor, float sigmaNormal, float sigmaAlbedo,
+                                 int medianKernelSize, float medianThreshold);
+
     Image nlmCPU(const Image& input, int searchWindowSize, int patchSize, float h);
 }
