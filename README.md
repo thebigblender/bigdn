@@ -19,22 +19,24 @@ Run the GUI or command line utility using the compiled binary.
 
 ### Running in GUI Mode
 
-To launch the interactive split screen interface, simply run the executable with no arguments:
+To launch the interactive split screen interface, run the executable with no arguments (or explicitly pass `--gui`):
 
 ```bash
 ./build/bigdn
 ```
 
-You can also launch it explicitly with the gui flag:
+### Running in CLI Mode
+
+To run in CLI mode, specify a filter using the `-f` or `--filter` flag:
 
 ```bash
-./build/bigdn --gui
+./build/bigdn -f <filter_name> [options]
 ```
 
 ### Options
 ```bash
 -h, --help              #Show help message and exit
--f, --filter <name>     #Filter to run: mean, gaussian, guided, joint_guided, atrous, or benchmark (default: benchmark)
+-f, --filter <name>     #Filter to run: mean, gaussian, guided, joint_guided, atrous, masked_atrous, or benchmark (default: benchmark)
 -d, --device <name>     #Execution device/implementation: cpu, omp, or cuda (default: cuda)
 -i, --input <path>      #Noisy beauty input image path (default: TEST.png)
 -n, --normal <path>     #Normal map input image path (default: TEST_NORMAL.png)
@@ -46,13 +48,9 @@ You can also launch it explicitly with the gui flag:
 -sc, --sigma-color <V>  #Color sigma parameter (default: 0.15)
 -sn, --sigma-normal <V> #Normal sigma parameter (default: 0.1)
 -sa, --sigma-albedo <V> #Albedo sigma parameter (default: 0.05)
+-mk, --median-kernel <N>   #Median kernel size (3 or 5, default: 3)
+-mt, --median-threshold <V> #Median outlier threshold (default: 0.05)
 -r, --runs <N>          #Number of iterations to run during benchmark mode (default: 5)
-```
-
-### Running Benchmark Mode
-
-```bash
-./build/bigdn -f benchmark
 ```
 
 ### Running a Specific Filter
@@ -67,16 +65,19 @@ Ex- To run the CUDA A Trous denoiser on custom images:
 
 Below is an example of the quality metrics obtained relative to the clean reference image. Higher values for both PSNR and MS-SSIM indicate better denoising quality:
 
+![Denoising Interface Screenshot](gui_screenshot.png)
+
 * Mean Filter: 28.23 dB PSNR, 0.9807 MS-SSIM
 * Gaussian Filter: 34.49 dB PSNR, 0.9885 MS-SSIM
 * Guided Filter: 28.20 dB PSNR, 0.9898 MS-SSIM
 * Joint Guided Filter 5x5 kernel: 35.7724 dB PSNR, 0.9989 MS-SSIM 
 * A Trous Wavelet Filter (3, 0.18, 0.15): 33.6352 dB PSNR, 0.9985 MS-SSIM
+* Masked Median + A-Trous Wavelet Hybrid Filter (3, 0.84, 0.07, 5, 0.015): 33.42 dB PSNR, 0.9981 MS-SSIM
 
 ## Known Issues
 
 * Classical edge preserving filters (Guided, Joint Guided, A Trous) have a hard mathematical limit distinguishing high frequency noise from true details, which can leave splotchiness in high noise renders.
 * The Joint Guided and A Trous filters are only supported on the CUDA device(blame my laziness).
-* A Trous does not denoise salt and pepper noise well because pixel outlier spikes are treated as edges and are not smoothed(help pls).
+* Standard A Trous does not denoise salt and pepper noise well because pixel outlier spikes are treated as edges and are not smoothed. Somewhat resolved by using the **Masked Median + A-Trous Wavelet Filter**, which pre-filters outlier spike pixels with a selective median filter before using variance-guided A Trous denoising.
 * Joint Guided filter is prone to smudginess and detail loss.
 * Gaussian filter is too smudgy and completely blurs geometric edges.
