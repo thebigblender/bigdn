@@ -15,7 +15,21 @@ This will configure CMake and compile the executable into the build directory.
 
 ## Running the Toolkit
 
-Run the benchmark executable using the compiled binary.
+Run the GUI or command line utility using the compiled binary.
+
+### Running in GUI Mode
+
+To launch the interactive split screen interface, simply run the executable with no arguments:
+
+```bash
+./build/bigdn
+```
+
+You can also launch it explicitly with the gui flag:
+
+```bash
+./build/bigdn --gui
+```
 
 ### Options
 ```bash

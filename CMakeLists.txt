@@ -28,11 +28,38 @@ else()
     message(WARNING "CUDA compiler (nvcc) not found. GPU filters will be compiled as CPU-only or stubbed out.")
 endif()
 
+# Find GLFW and OpenGL
+find_package(glfw3 REQUIRED)
+find_package(OpenGL REQUIRED)
+
+# Fetch Dear ImGui
+include(FetchContent)
+FetchContent_Declare(
+    imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG v1.90
+)
+FetchContent_MakeAvailable(imgui)
+
+# Set ImGui directories and sources
+set(IMGUI_DIR ${imgui_SOURCE_DIR})
+set(IMGUI_SOURCES
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_demo.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+)
+
 # Include directories
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external
     ${CMAKE_CURRENT_SOURCE_DIR}/external/stb
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
 )
 
 # Source files (we list them explicitly to avoid GLOB caching issues)
@@ -41,6 +68,7 @@ set(SOURCES
     src/benchmark.cpp
     src/image.cpp
     src/metrics.cpp
+    src/gui.cpp
     
     # Classical Filters (Uncomment and implement these files as you create them)
     src/filters/mean_ST.cpp
@@ -68,6 +96,9 @@ if(CUDA_ENABLED)
     )
 endif()
 
+# Append ImGui source files
+list(APPEND SOURCES ${IMGUI_SOURCES})
+
 # Executable target
 add_executable(bigdn ${SOURCES})
 
@@ -75,6 +106,9 @@ add_executable(bigdn ${SOURCES})
 target_link_libraries(bigdn
     PRIVATE
         OpenMP::OpenMP_CXX
+        glfw
+        OpenGL::GL
+        ${CMAKE_DL_LIBS}
 )
 
 if(CUDA_ENABLED)

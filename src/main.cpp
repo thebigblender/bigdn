@@ -5,11 +5,13 @@
 #include "filters.hpp"
 #include "metrics.hpp"
 #include "benchmark.hpp"
+#include "gui.hpp"
 
 void printHelp() {
     std::cout << "Usage: ./build/bigdn [options]\n\n"
               << "Options:\n"
               << "  -h, --help            Show this help message and exit\n"
+              << "  --gui                 Launch the interactive graphical user interface (default if no options are specified)\n"
               << "  -f, --filter <name>   Filter to run: mean, gaussian, guided, joint_guided, atrous, or benchmark (default: benchmark)\n"
               << "  -d, --device <name>   Execution device/implementation: cpu, omp, or cuda (default: cuda)\n"
               << "  -i, --input <path>    Noisy beauty input image path (default: TEST.png)\n"
@@ -26,6 +28,13 @@ void printHelp() {
 }
 
 int main(int argc, char* argv[]) {
+    // If no arguments, launch GUI
+    if (argc == 1) {
+        std::cout << "Launching GUI...\n";
+        GUI::launch();
+        return 0;
+    }
+
     std::string filter = "benchmark";
     std::string device = "cuda";
     std::string inputPath = "TEST.png";
@@ -39,12 +48,15 @@ int main(int argc, char* argv[]) {
     float sigmaNormal = 0.1f;
     float sigmaAlbedo = 0.05f;
     int numRuns = 5;
+    bool launchGui = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "-h" || arg == "--help") {
             printHelp();
             return 0;
+        } else if (arg == "--gui") {
+            launchGui = true;
         } else if ((arg == "-f" || arg == "--filter") && i + 1 < argc) {
             filter = argv[++i];
         } else if ((arg == "-d" || arg == "--device") && i + 1 < argc) {
@@ -106,6 +118,12 @@ int main(int argc, char* argv[]) {
             printHelp();
             return 1;
         }
+    }
+
+    if (launchGui) {
+        std::cout << "Launching GUI...\n";
+        GUI::launch();
+        return 0;
     }
 
     if (kernelSize % 2 == 0 || kernelSize <= 0) {
